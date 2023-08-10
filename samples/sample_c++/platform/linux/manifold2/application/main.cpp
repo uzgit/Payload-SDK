@@ -86,6 +86,8 @@ start:
         << "| [i] Start power management sample - you will see notification when aircraft power off            |\n"
         << "| [j] Start data transmission sample - you can send or recv custom data on MSDK demo               |\n"
         << "| [k] Run camera manager sample - you can test camera's functions interactively                    |\n"
+        << "| [l] Say hello to the world                                                                       |\n"
+        << "| [m] Stream video using camera_emu                                                                |\n"
         << std::endl;
 
     std::cin >> inputChar;
@@ -201,6 +203,13 @@ start:
             break;
         case 'k':
             DjiUser_RunCameraManagerSample();
+            break;
+        case 'l':
+	    USER_LOG_INFO("Hello, World!");
+            break;
+        case 'm':
+	    USER_LOG_INFO("Attempting to start streaming video from companion board!");
+
             break;
         default:
             break;

@@ -137,7 +137,7 @@ int main(int argc, char **argv)
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
     }
 
-    returnCode = DjiCore_SetAlias("PSDK_APPALIAS");
+    returnCode = DjiCore_SetAlias("Manifold 2 C Alias");
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("set alias error");
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
