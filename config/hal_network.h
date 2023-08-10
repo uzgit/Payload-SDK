@@ -40,9 +40,9 @@ extern "C" {
  * NIC name micro define as #define 'LINUX_NETWORK_DEV   "your NIC name"'.
  */
 #ifdef PLATFORM_ARCH_x86_64
-#define LINUX_NETWORK_DEV           "rndis0"
+#define LINUX_NETWORK_DEV           "l4tbr0"
 #else
-#define LINUX_NETWORK_DEV           "rndis0"
+#define LINUX_NETWORK_DEV           "l4tbr0"
 #endif
 /**
  * @attention
