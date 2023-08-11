@@ -23,6 +23,9 @@
  */
 
 /* Includes ------------------------------------------------------------------*/
+#include "dji_sdk_app_info.h"
+#include "dji_sdk_config.h"
+#include "../hal/hal_network.h"
 #include <liveview/test_liveview_entry.hpp>
 #include <perception/test_perception_entry.hpp>
 #include <flight_control/test_flight_control.h>
@@ -43,6 +46,16 @@
 #include <camera_manager/test_camera_manager.h>
 #include "camera_manager/test_camera_manager_entry.h"
 
+// other stuff
+#include<opencv2/opencv.hpp>
+#include<opencv2/core/core.hpp>
+#include<opencv2/highgui/highgui.hpp>
+
+#define DATA_SEND_FROM_VIDEO_STREAM_MAX_LEN  60000
+#define USER_UTIL_UNUSED(x)                                 ((x) = (x))
+#define USER_UTIL_MIN(a, b)                                 (((a) < (b)) ? (a) : (b))
+#define USER_UTIL_MAX(a, b)                                 (((a) > (b)) ? (a) : (b))
+
 /* Private constants ---------------------------------------------------------*/
 
 /* Private types -------------------------------------------------------------*/
@@ -62,162 +75,75 @@ int main(int argc, char **argv)
     T_DjiReturnCode returnCode;
     T_DjiTestApplyHighPowerHandler applyHighPowerHandler;
 
-start:
-    std::cout
-        << "\n"
-        << "| Available commands:                                                                              |\n"
-        << "| [0] Fc subscribe sample - subscribe quaternion and gps data                                      |\n"
-        << "| [1] Flight controller sample - take off landing                                                  |\n"
-        << "| [2] Flight controller sample - take off position ctrl landing                                    |\n"
-        << "| [3] Flight controller sample - take off go home force landing                                    |\n"
-        << "| [4] Flight controller sample - take off velocity ctrl landing                                    |\n"
-        << "| [5] Flight controller sample - arrest flying                                                     |\n"
-        << "| [6] Flight controller sample - set get parameters                                                |\n"
-        << "| [7] Hms info sample - get health manger system info                                              |\n"
-        << "| [8] Waypoint 2.0 sample - run airline mission by settings (only support on M300 RTK)             |\n"
-        << "| [9] Waypoint 3.0 sample - run airline mission by kmz file (not support on M300 RTK)              |\n"
-        << "| [a] Gimbal manager sample                                                                        |\n"
-        << "| [c] Camera stream view sample - display the camera video stream                                  |\n"
-        << "| [d] Stereo vision view sample - display the stereo image                                         |\n"
-        << "| [e] Start camera all features sample - you can operate the camera on DJI Pilot                   |\n"
-        << "| [f] Start gimbal all features sample - you can operate the gimbal on DJI Pilot                   |\n"
-        << "| [g] Start widget all features sample - you can operate the widget on DJI Pilot                   |\n"
-        << "| [h] Start widget speaker sample - you can operate the speaker on DJI Pilot2                      |\n"
-        << "| [i] Start power management sample - you will see notification when aircraft power off            |\n"
-        << "| [j] Start data transmission sample - you can send or recv custom data on MSDK demo               |\n"
-        << "| [k] Run camera manager sample - you can test camera's functions interactively                    |\n"
-        << "| [l] Say hello to the world                                                                       |\n"
-        << "| [m] Stream video using camera_emu                                                                |\n"
-        << std::endl;
+//    returnCode = DjiTest_CameraEmuBaseStartService();
+//    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//	USER_LOG_ERROR("camera emu common init error");
+//    }
+//
+//    if (DjiPlatform_GetSocketHandler() != nullptr) {
+//	returnCode = DjiTest_CameraEmuMediaStartService();
+//	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//	    USER_LOG_ERROR("camera emu media init error");
+//	}
+//    }
 
-    std::cin >> inputChar;
-    switch (inputChar) {
-        case '0':
-            DjiTest_FcSubscriptionRunSample();
-            break;
-        case '1':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_TAKE_OFF_LANDING);
-            break;
-        case '2':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_TAKE_OFF_POSITION_CTRL_LANDING);
-            break;
-        case '3':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_TAKE_OFF_GO_HOME_FORCE_LANDING);
-            break;
-        case '4':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_TAKE_OFF_VELOCITY_CTRL_LANDING);
-            break;
-        case '5':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_ARREST_FLYING);
-            break;
-        case '6':
-            DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_SET_GET_PARAM);
-            break;
-        case '7':
-            DjiTest_HmsRunSample();
-            break;
-        case '8':
-            DjiTest_WaypointV2RunSample();
-            break;
-        case '9':
-            DjiTest_WaypointV3RunSample();
-            break;
-        case 'a':
-            DjiUser_RunGimbalManagerSample();
-            break;
-        case 'c':
-            DjiUser_RunCameraStreamViewSample();
-            break;
-        case 'd':
-            DjiUser_RunStereoVisionViewSample();
-            break;
-        case 'e':
-            returnCode = DjiTest_CameraEmuBaseStartService();
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("camera emu common init error");
-                break;
-            }
-
-            if (DjiPlatform_GetSocketHandler() != nullptr) {
-                returnCode = DjiTest_CameraEmuMediaStartService();
-                if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                    USER_LOG_ERROR("camera emu media init error");
-                    break;
-                }
-            }
-
-            USER_LOG_INFO("Start camera all feautes sample successfully");
-            break;
-        case 'f':
-            if (DjiTest_GimbalStartService() != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("psdk gimbal init error");
-                break;
-            }
-
-            USER_LOG_INFO("Start gimbal all feautes sample successfully");
-            break;
-        case 'g':
-            returnCode = DjiTest_WidgetStartService();
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("widget sample init error");
-                break;
-            }
-
-            USER_LOG_INFO("Start widget all feautes sample successfully");
-            break;
-        case 'h':
-            returnCode = DjiTest_WidgetSpeakerStartService();
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("widget speaker test init error");
-                break;
-            }
-
-            USER_LOG_INFO("Start widget speaker sample successfully");
-            break;
-        case 'i':
-            applyHighPowerHandler.pinInit = DjiTest_HighPowerApplyPinInit;
-            applyHighPowerHandler.pinWrite = DjiTest_WriteHighPowerApplyPin;
-
-            returnCode = DjiTest_RegApplyHighPowerHandler(&applyHighPowerHandler);
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("regsiter apply high power handler error");
-                break;
-            }
-
-            returnCode = DjiTest_PowerManagementStartService();
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("power management init error");
-                break;
-            }
-
-            USER_LOG_INFO("Start power management sample successfully");
-            break;
-        case 'j':
-            returnCode = DjiTest_DataTransmissionStartService();
-            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-                USER_LOG_ERROR("data transmission sample init error");
-                break;
-            }
-
-            USER_LOG_INFO("Start data transmission sample successfully");
-            break;
-        case 'k':
-            DjiUser_RunCameraManagerSample();
-            break;
-        case 'l':
-	    USER_LOG_INFO("Hello, World!");
-            break;
-        case 'm':
-	    USER_LOG_INFO("Attempting to start streaming video from companion board!");
-
-            break;
-        default:
-            break;
+    cv::VideoCapture capture("/dev/video0");
+    if (!capture.isOpened()) {
+        std::cerr << "Error: Could not open video device." << std::endl;
+        return 1;
     }
 
-    osalHandler->TaskSleepMs(2000);
+    // Create a named window to display the video feed
+    cv::namedWindow("Video Feed", cv::WINDOW_NORMAL);
 
-    goto start;
+    while (true)
+    {
+        cv::Mat frame;
+        cv::Mat frame_uint8;
+
+        // Capture a frame from the video device
+        capture >> frame;
+	frame.convertTo(frame_uint8, CV_8U);
+
+        if (frame.empty()) {
+            std::cerr << "Error: No frame captured." << std::endl;
+            break;
+        }
+
+        // Display the captured frame in the named window
+        cv::imshow("Video Feed", frame_uint8);
+
+        // Exit loop if 'q' is pressed
+        if (cv::waitKey(1) == 'q')
+	{
+            break;
+        }
+
+//	size_t dataLength = frame_uint8.rows * frame_uint8.cols * frame_uint8.channels() * sizeof(uint8_t);
+//	size_t lengthOfDataHaveBeenSent = 0;
+//	while (dataLength - lengthOfDataHaveBeenSent)
+//	{
+//		size_t lengthOfDataToBeSent = USER_UTIL_MIN(DATA_SEND_FROM_VIDEO_STREAM_MAX_LEN, dataLength - lengthOfDataHaveBeenSent);
+//		returnCode = DjiPayloadCamera_SendVideoStream((const uint8_t *) frame_uint8.data + lengthOfDataHaveBeenSent,
+//		lengthOfDataToBeSent);
+//		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//		{
+//			USER_LOG_ERROR("send video stream error: 0x%08llX.", returnCode);
+//		}
+//		lengthOfDataHaveBeenSent += lengthOfDataToBeSent;
+//	}
+    }
+
+    // Release the video capture object and destroy the window
+    capture.release();
+    cv::destroyAllWindows();
+
+    while(true)
+    {
+	    std::cout << "Hello, World!" << std::endl;
+	    osalHandler->TaskSleepMs(500);
+    }
+
 }
 
 /* Private functions definition-----------------------------------------------*/
