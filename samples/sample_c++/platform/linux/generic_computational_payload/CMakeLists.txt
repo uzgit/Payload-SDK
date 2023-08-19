@@ -45,9 +45,22 @@ if (DEVICE_SYSTEM_ID MATCHES x86_64)
 elseif (DEVICE_SYSTEM_ID MATCHES aarch64)
     set(TOOLCHAIN_NAME aarch64-linux-gnu-gcc)
     add_definitions(-DPLATFORM_ARCH_aarch64=1)
+
+    file(READ /proc/device-tree/model RPI_MODEL)
+    if("${RPI_MODEL}" MATCHES "Raspberry Pi")
+	    message("Raspberry Pi detected - setting LIBRARY_PATH")
+	    set(TOOLCHAIN_NAME arm-linux-gnueabihf-gcc)
+	    #set(LIBRARY_PATH psdk_lib/lib/arm-linux-gnueabihf-gcc) 
+	    # Your Raspberry Pi-specific configurations here
+	    #    else()
+	    #        message("Not a Raspberry Pi**********************************************")
+	    #	    # Your non-Raspberry Pi configurations here
+    endif()
+
 else ()
     message(FATAL_ERROR "FATAL: Please confirm your platform.")
 endif ()
+
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../common/3rdparty)
 

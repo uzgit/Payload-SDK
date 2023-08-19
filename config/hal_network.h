@@ -40,20 +40,23 @@ extern "C" {
  * NIC name micro define as #define 'LINUX_NETWORK_DEV   "your NIC name"'.
  */
 #ifdef PLATFORM_ARCH_x86_64
-#define LINUX_NETWORK_DEV           "l4tbr0"
+#define LINUX_NETWORK_DEV           "usb0"
 #else
-#define LINUX_NETWORK_DEV           "l4tbr0"
+#define LINUX_NETWORK_DEV           "usb0"
 #endif
 /**
  * @attention
  */
 
+//#define USB_NET_ADAPTER_VID                   (0xbbbb)
+//#define USB_NET_ADAPTER_PID                   (0xcccc)
+
 #ifdef PLATFORM_ARCH_x86_64
-#define USB_NET_ADAPTER_VID                   (0x0955)
-#define USB_NET_ADAPTER_PID                   (0x7020)
+#define USB_NET_ADAPTER_VID                   (0xbbbb)
+#define USB_NET_ADAPTER_PID                   (0xcccc)
 #else
-#define USB_NET_ADAPTER_VID                   (0x0955)
-#define USB_NET_ADAPTER_PID                   (0x7020)
+#define USB_NET_ADAPTER_VID                   (0xbbbb)
+#define USB_NET_ADAPTER_PID                   (0xcccc)
 #endif
 
 #define LINUX_CMD_STR_MAX_SIZE      (128)
