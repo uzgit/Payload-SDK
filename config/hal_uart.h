@@ -45,8 +45,8 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 //User can config dev based on there environmental conditions
-#define LINUX_UART_DEV1    "/dev/serial0"
-#define LINUX_UART_DEV2    "/dev/serial0"
+#define LINUX_UART_DEV1    "/dev/serial1"
+#define LINUX_UART_DEV2    "/dev/serial1"
 
 /* Exported types ------------------------------------------------------------*/
 
