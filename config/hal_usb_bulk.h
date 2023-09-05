@@ -71,15 +71,15 @@ extern "C" {
 //#define LINUX_USB_VID                         (0x2ca3)
 //#define LINUX_USB_PID                         (0x001f)
 
-#define LINUX_USB_VID                         (0x10c4)
-#define LINUX_USB_PID                         (0xea60)
+#define LINUX_USB_VID                         (0x0525)
+#define LINUX_USB_PID                         (0xa4a2)
 #else
 // should be for dev board
 //#define LINUX_USB_VID                         (0x2ca3)
 //#define LINUX_USB_PID                         (0x001f)
 
-#define LINUX_USB_VID                         (0x10c4)
-#define LINUX_USB_PID                         (0xea60)
+#define LINUX_USB_VID                         (0x0525)
+#define LINUX_USB_PID                         (0xa4a2)
 #endif
 
 /* Exported types ------------------------------------------------------------*/

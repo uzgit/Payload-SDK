@@ -2,8 +2,8 @@
 cd /sys/kernel/config/usb_gadget/
 mkdir -p pi4
 cd pi4
-echo 0xbbbb > idVendor # Linux Foundation
-echo 0xcccc > idProduct # Multifunction Composite Gadget
+echo 0x0525 > idVendor # Linux Foundation
+echo 0xa4a2 > idProduct # Multifunction Composite Gadget
 echo 0x0100 > bcdDevice # v1.0.0
 echo 0x0200 > bcdUSB # USB2
 echo 0xEF > bDeviceClass
