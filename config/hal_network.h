@@ -52,11 +52,11 @@ extern "C" {
 //#define USB_NET_ADAPTER_PID                   (0xcccc)
 
 #ifdef PLATFORM_ARCH_x86_64
-#define USB_NET_ADAPTER_VID                   (0xbbbb)
-#define USB_NET_ADAPTER_PID                   (0xcccc)
+#define USB_NET_ADAPTER_VID                   (0x0525)
+#define USB_NET_ADAPTER_PID                   (0xa4a2)
 #else
-#define USB_NET_ADAPTER_VID                   (0xbbbb)
-#define USB_NET_ADAPTER_PID                   (0xcccc)
+#define USB_NET_ADAPTER_VID                   (0x0525)
+#define USB_NET_ADAPTER_PID                   (0xa4a2)
 #endif
 
 #define LINUX_CMD_STR_MAX_SIZE      (128)
