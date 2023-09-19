@@ -96,6 +96,7 @@ int main(int argc, char **argv)
     T_DjiReturnCode returnCode;
     T_DjiUserInfo userInfo;
     T_DjiAircraftInfoBaseInfo aircraftInfoBaseInfo;
+    T_DjiAircraftVersion aircraftInfoVersion;
     T_DjiFirmwareVersion firmwareVersion = {
         .majorVersion = 1,
         .minorVersion = 0,
@@ -136,7 +137,20 @@ int main(int argc, char **argv)
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
     }
 
+<<<<<<< HEAD
     returnCode = DjiCore_SetAlias("Jetson (C)");
+=======
+    returnCode = DjiAircraftInfo_GetAircraftVersion(&aircraftInfoVersion);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        USER_LOG_ERROR("get aircraft version info error");
+    } else {
+        USER_LOG_INFO("Aircraft version is V%d.%d.%d.%d", aircraftInfoVersion.debugVersion,
+                      aircraftInfoVersion.modifyVersion, aircraftInfoVersion.minorVersion,
+                      aircraftInfoVersion.majorVersion);
+    }
+
+    returnCode = DjiCore_SetAlias("PSDK_APPALIAS");
+>>>>>>> beb6359d41d381dc941880a7026acc66cf365a87
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("set alias error");
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
@@ -291,8 +305,8 @@ int main(int argc, char **argv)
         }
 #endif
 
-#ifdef CONFIG_MODULE_SAMPLE_HMS_ON
-        returnCode = DjiTest_HmsStartService();
+#ifdef CONFIG_MODULE_SAMPLE_HMS_CUSTOMIZATION_ON
+        returnCode = DjiTest_HmsCustomizationStartService();
         if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
             USER_LOG_ERROR("hms test init error");
         }
