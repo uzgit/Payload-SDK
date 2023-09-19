@@ -175,13 +175,6 @@ start:
             DjiUser_RunCameraManagerSample();
             break;
         case 'l':
-<<<<<<< HEAD
-	    USER_LOG_INFO("Hello, World!");
-            break;
-        case 'm':
-	    USER_LOG_INFO("Attempting to start streaming video from companion board!");
-
-=======
             returnCode = DjiTest_PositioningStartService();
             if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
                 USER_LOG_ERROR("rtk positioning sample init error");
@@ -189,7 +182,6 @@ start:
             }
 
             USER_LOG_INFO("Start rtk positioning sample successfully");
->>>>>>> beb6359d41d381dc941880a7026acc66cf365a87
             break;
         default:
             break;
