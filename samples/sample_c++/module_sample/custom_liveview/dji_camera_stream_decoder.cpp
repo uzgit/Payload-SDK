@@ -28,6 +28,9 @@
 #include "pthread.h"
 #include "dji_logger.h"
 
+#include <libavutil/avutil.h>
+#include <iostream>
+
 /* Private constants ---------------------------------------------------------*/
 
 /* Private types -------------------------------------------------------------*/
@@ -70,6 +73,9 @@ DJICameraStreamDecoder::~DJICameraStreamDecoder()
 
 bool DJICameraStreamDecoder::init()
 {
+
+    std::cout << "In stream decoder init!" << std::endl;
+
     pthread_mutex_lock(&decodemutex);
 
     if (true == initSuccess) {
@@ -84,8 +90,31 @@ bool DJICameraStreamDecoder::init()
         return false;
     }
 
+    // *************************************************************************
+    // joshua
+//    pCodecCtx->time_base.num = 1;
+//    pCodecCtx->time_base.den = 15;
+//    pCodecCtx->time_base.den = 30;
+//    pCodecCtx->time_base.den = 60;
+//    pCodecCtx->width         = 1920;
+//    pCodecCtx->height        = 1080;
+//    pCodecCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+    // Set the time per frame for the codec context
+
+//    AVRational timebase;
+//    timebase.num = 1;
+//    timebase.den = 30;  // Replace with your actual frame rate (e.g., 30 frames per second)
+//    if (av_opt_set_q(pCodecCtx->priv_data, "time_base", timebase, 0) < 0) {
+//        // Handle the error here
+//	    std::cout << "got the error unfortunately" << std::endl;
+//    }
+    // *************************************************************************
+
     pCodecCtx->thread_count = 4;
     pCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    //pCodec = avcodec_find_encoder_by_name("h264_v4l2m2m"); // joshua
+    //pCodec = avcodec_find_decoder_by_name("h264"); // joshua
+    //pCodec = avcodec_find_decoder_by_name("h264_v4l2m2m"); // joshua
     if (!pCodec || avcodec_open2(pCodecCtx, pCodec, nullptr) < 0) {
         return false;
     }
@@ -112,6 +141,9 @@ bool DJICameraStreamDecoder::init()
     initSuccess = true;
     pthread_mutex_unlock(&decodemutex);
 
+    
+
+    std::cout << "at end of stream decoder init!" << std::endl;
     return true;
 }
 
