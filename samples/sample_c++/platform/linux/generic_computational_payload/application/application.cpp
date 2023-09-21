@@ -31,6 +31,7 @@
 #include <dji_aircraft_info.h>
 #include <csignal>
 #include "dji_sdk_config.h"
+#include "dji_config_manager.h"
 
 #include "../common/osal/osal.h"
 #include "../common/osal/osal_fs.h"
@@ -52,6 +53,8 @@
 #define USER_UTIL_MIN(a, b)                                 (((a) < (b)) ? (a) : (b))
 #define USER_UTIL_MAX(a, b)                                 (((a) > (b)) ? (a) : (b))
 
+#define DJI_USE_SDK_CONFIG_BY_JSON      (0)
+
 /* Private types -------------------------------------------------------------*/
 
 /* Private values -------------------------------------------------------------*/
@@ -61,12 +64,10 @@ static FILE *s_djiLogFileCnt;
 /* Private functions declaration ---------------------------------------------*/
 static void DjiUser_NormalExitHandler(int signalNum);
 
-static T_DjiTaskHandle s_userSendVideoThread;
-
 /* Exported functions definition ---------------------------------------------*/
 Application::Application(int argc, char **argv)
 {
-    Application::DjiUser_SetupEnvironment();
+    Application::DjiUser_SetupEnvironment(argc, argv);
     Application::DjiUser_ApplicationStart();
 
     Osal_TaskSleepMs(3000);
@@ -75,246 +76,8 @@ Application::Application(int argc, char **argv)
 Application::~Application()
 = default;
 
-//_Noreturn static void *UserCameraMedia_SendVideoTask(void *arg);
-//static void *UserCameraMedia_SendVideoTask(void *arg)
-//{
-//    int ret;
-//    T_DjiReturnCode returnCode;
-//    static uint32_t sendVideoStep = 0;
-//    FILE *fpFile = NULL;
-//    unsigned long dataLength = 0;
-//    uint16_t lengthOfDataToBeSent = 0;
-//    int lengthOfDataHaveBeenSent = 0;
-//    char *dataBuffer = NULL;
-//    T_TestPayloadCameraPlaybackCommand playbackCommand = {0};
-//    uint16_t bufferReadSize = 0;
-//    char *videoFilePath = NULL;
-//    char *transcodedFilePath = NULL;
-//    float frameRate = 1.0f;
-//    T_TestPayloadCameraVideoFrameInfo *frameInfo = NULL;
-//    uint32_t frameNumber = 0;
-//    uint32_t frameCount = 0;
-//    uint32_t startTimeMs = 0;
-//    bool sendVideoFlag = true;
-//    bool sendOneTimeFlag = false;
-//    T_DjiDataChannelState videoStreamState = {0};
-//    E_DjiCameraMode mode = DJI_CAMERA_MODE_SHOOT_PHOTO;
-//    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-//    uint32_t frameBufSize = 0;
-//    E_DjiCameraVideoStreamType videoStreamType;
-//    char curFileDirPath[DJI_FILE_PATH_SIZE_MAX];
-//    char tempPath[DJI_FILE_PATH_SIZE_MAX];
-//
-//    USER_UTIL_UNUSED(arg);
-//
-//    returnCode = DjiUserUtil_GetCurrentFileDirPath(__FILE__, DJI_FILE_PATH_SIZE_MAX, curFileDirPath);
-//    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//        USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", returnCode);
-//        exit(1);
-//    }
-//    if (s_isMediaFileDirPathConfigured == true) {
-//        snprintf(tempPath, DJI_FILE_PATH_SIZE_MAX, "%sPSDK_0005.h264", s_mediaFileDirPath);
-//    } else {
-//        snprintf(tempPath, DJI_FILE_PATH_SIZE_MAX, "%smedia_file/PSDK_0005.h264", curFileDirPath);
-//    }
-//
-//    videoFilePath = osalHandler->Malloc(DJI_FILE_PATH_SIZE_MAX);
-//    if (videoFilePath == NULL) {
-//        USER_LOG_ERROR("malloc memory for video file path fail.");
-//        exit(1);
-//    }
-//
-//    transcodedFilePath = osalHandler->Malloc(DJI_FILE_PATH_SIZE_MAX);
-//    if (transcodedFilePath == NULL) {
-//        USER_LOG_ERROR("malloc memory for transcoded file path fail.");
-//        exit(1);
-//    }
-//
-//    frameInfo = osalHandler->Malloc(VIDEO_FRAME_MAX_COUNT * sizeof(T_TestPayloadCameraVideoFrameInfo));
-//    if (frameInfo == NULL) {
-//        USER_LOG_ERROR("malloc memory for frame info fail.");
-//        exit(1);
-//    }
-//    memset(frameInfo, 0, VIDEO_FRAME_MAX_COUNT * sizeof(T_TestPayloadCameraVideoFrameInfo));
-//
-//    returnCode = DjiPlayback_StopPlayProcess();
-//    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//        USER_LOG_ERROR("stop playback and start liveview error: 0x%08llX.", returnCode);
-//        exit(1);
-//    }
-//
-//    while (1) {
-//        osalHandler->TaskSleepMs(1000 / SEND_VIDEO_TASK_FREQ);
-//
-//        // response playback command
-//        if (osalHandler->MutexLock(s_mediaPlayCommandBufferMutex) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("mutex lock error");
-//            continue;
-//        }
-//
-//        bufferReadSize = UtilBuffer_Get(&s_mediaPlayCommandBufferHandler, (uint8_t *) &playbackCommand,
-//                                        sizeof(T_TestPayloadCameraPlaybackCommand));
-//
-//        if (osalHandler->MutexUnlock(s_mediaPlayCommandBufferMutex) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("mutex unlock error");
-//            continue;
-//        }
-//
-//        if (bufferReadSize != sizeof(T_TestPayloadCameraPlaybackCommand))
-//            goto send;
-//
-//        switch (playbackCommand.command) {
-//            case TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_STOP:
-//                snprintf(videoFilePath, DJI_FILE_PATH_SIZE_MAX, "%s", tempPath);
-//                startTimeMs = 0;
-//                sendVideoFlag = true;
-//                sendOneTimeFlag = false;
-//                break;
-//            case TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_PAUSE:
-//                sendVideoFlag = false;
-//                goto send;
-//            case TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_START:
-//                snprintf(videoFilePath, DJI_FILE_PATH_SIZE_MAX, "%s", playbackCommand.path);
-//                startTimeMs = playbackCommand.timeMs;
-//                sendVideoFlag = true;
-//                sendOneTimeFlag = true;
-//                break;
-//            default:
-//                USER_LOG_ERROR("playback command invalid: %d.", playbackCommand.command);
-//                sendVideoFlag = false;
-//                goto send;
-//        }
-//
-//        // video send preprocess
-//        returnCode = DjiPlayback_VideoFileTranscode(videoFilePath, "h264", transcodedFilePath,
-//                                                    DJI_FILE_PATH_SIZE_MAX);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("transcode video file error: 0x%08llX.", returnCode);
-//            continue;
-//        }
-//
-//        returnCode = DjiPlayback_GetFrameRateOfVideoFile(transcodedFilePath, &frameRate);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("get frame rate of video error: 0x%08llX.", returnCode);
-//            continue;
-//        }
-//
-//        returnCode = DjiPlayback_GetFrameInfoOfVideoFile(transcodedFilePath, frameInfo, VIDEO_FRAME_MAX_COUNT,
-//                                                         &frameCount);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("get frame info of video error: 0x%08llX.", returnCode);
-//            continue;
-//        }
-//
-//        returnCode = DjiPlayback_GetFrameNumberByTime(frameInfo, frameCount, &frameNumber,
-//                                                      startTimeMs);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("get start frame number error: 0x%08llX.", returnCode);
-//            continue;
-//        }
-//
-//        if (fpFile != NULL)
-//            fclose(fpFile);
-//
-//        fpFile = fopen(transcodedFilePath, "rb+");
-//        if (fpFile == NULL) {
-//            USER_LOG_ERROR("open video file fail.");
-//            continue;
-//        }
-//
-//send:
-//        if (fpFile == NULL) {
-//            USER_LOG_ERROR("open video file fail.");
-//            continue;
-//        }
-//
-//        if (sendVideoFlag != true)
-//            continue;
-//
-//        returnCode = DjiTest_CameraGetMode(&mode);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            continue;
-//        }
-//
-//        returnCode = DjiTest_CameraGetVideoStreamType(&videoStreamType);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            continue;
-//        }
-//
-//        if (mode == DJI_CAMERA_MODE_PLAYBACK && s_playbackInfo.isInPlayProcess == false) {
-//            continue;
-//        }
-//
-//        if (!USER_UTIL_IS_WORK_TURN(sendVideoStep++, frameRate, SEND_VIDEO_TASK_FREQ))
-//            continue;
-//
-//        frameBufSize = frameInfo[frameNumber].size;
-//        if (videoStreamType == DJI_CAMERA_VIDEO_STREAM_TYPE_H264_DJI_FORMAT) {
-//            frameBufSize = frameBufSize + VIDEO_FRAME_AUD_LEN;
-//        }
-//
-//        dataBuffer = calloc(frameBufSize, 1);
-//        if (dataBuffer == NULL) {
-//            USER_LOG_ERROR("malloc fail.");
-//            goto free;
-//        }
-//
-//        ret = fseek(fpFile, frameInfo[frameNumber].positionInFile, SEEK_SET);
-//        if (ret != 0) {
-//            USER_LOG_ERROR("fseek fail.");
-//            goto free;
-//        }
-//
-//        dataLength = fread(dataBuffer, 1, frameInfo[frameNumber].size, fpFile);
-//        if (dataLength != frameInfo[frameNumber].size) {
-//            USER_LOG_ERROR("read data from video file error.");
-//        } else {
-//            USER_LOG_DEBUG("read data from video file success, len = %d B\r\n", dataLength);
-//        }
-//
-//        if (videoStreamType == DJI_CAMERA_VIDEO_STREAM_TYPE_H264_DJI_FORMAT) {
-//            memcpy(&dataBuffer[frameInfo[frameNumber].size], s_frameAudInfo, VIDEO_FRAME_AUD_LEN);
-//            dataLength = dataLength + VIDEO_FRAME_AUD_LEN;
-//        }
-//
-//        lengthOfDataHaveBeenSent = 0;
-//        while (dataLength - lengthOfDataHaveBeenSent) {
-//            lengthOfDataToBeSent = USER_UTIL_MIN(DATA_SEND_FROM_VIDEO_STREAM_MAX_LEN,
-//                                                 dataLength - lengthOfDataHaveBeenSent);
-//            returnCode = DjiPayloadCamera_SendVideoStream((const uint8_t *) dataBuffer + lengthOfDataHaveBeenSent,
-//                                                          lengthOfDataToBeSent);
-//            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//                USER_LOG_ERROR("send video stream error: 0x%08llX.", returnCode);
-//            }
-//            lengthOfDataHaveBeenSent += lengthOfDataToBeSent;
-//        }
-//
-//        if ((frameNumber++) >= frameCount) {
-//            USER_LOG_DEBUG("reach file tail.");
-//            frameNumber = 0;
-//
-//            if (sendOneTimeFlag == true)
-//                sendVideoFlag = false;
-//        }
-//
-//        returnCode = DjiPayloadCamera_GetVideoStreamState(&videoStreamState);
-//        if (returnCode == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_DEBUG(
-//                "video stream state: realtimeBandwidthLimit: %d, realtimeBandwidthBeforeFlowController: %d, realtimeBandwidthAfterFlowController:%d busyState: %d.",
-//                videoStreamState.realtimeBandwidthLimit, videoStreamState.realtimeBandwidthBeforeFlowController,
-//                videoStreamState.realtimeBandwidthAfterFlowController,
-//                videoStreamState.busyState);
-//        } else {
-//            USER_LOG_ERROR("get video stream state error.");
-//        }
-//
-//free:
-//        free(dataBuffer);
-//    }
-//}
-
 /* Private functions definition-----------------------------------------------*/
-void Application::DjiUser_SetupEnvironment()
+void Application::DjiUser_SetupEnvironment(int argc, char **argv)
 {
     T_DjiReturnCode returnCode;
     T_DjiOsalHandler osalHandler = {0};
@@ -323,8 +86,9 @@ void Application::DjiUser_SetupEnvironment()
     T_DjiLoggerConsole printConsole;
     T_DjiLoggerConsole localRecordConsole;
     T_DjiFileSystemHandler fileSystemHandler = {0};
-    T_DjiSocketHandler socketHandler {0};
+    T_DjiSocketHandler socketHandler{0};
     T_DjiHalNetworkHandler networkHandler = {0};
+    T_DjiUserLinkConfig linkConfig;
 
     networkHandler.NetworkInit = HalNetWork_Init;
     networkHandler.NetworkDeInit = HalNetWork_DeInit;
@@ -403,6 +167,28 @@ void Application::DjiUser_SetupEnvironment()
         throw std::runtime_error("Register hal uart handler error.");
     }
 
+#if DJI_USE_SDK_CONFIG_BY_JSON
+    if (argc > 1) {
+        DjiUserConfigManager_LoadConfiguration(argv[1]);
+    } else {
+        DjiUserConfigManager_LoadConfiguration(nullptr);
+    }
+
+    DjiUserConfigManager_GetLinkConfig(&linkConfig);
+    if (linkConfig.type == DJI_USER_LINK_CONFIG_USE_UART_AND_NETWORK_DEVICE) {
+        returnCode = DjiPlatform_RegHalNetworkHandler(&networkHandler);
+        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+            throw std::runtime_error("Register hal network handler error");
+        }
+    } else if (linkConfig.type == DJI_USER_LINK_CONFIG_USE_UART_AND_USB_BULK_DEVICE) {
+        returnCode = DjiPlatform_RegHalUsbBulkHandler(&usbBulkHandler);
+        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+            throw std::runtime_error("Register hal usb bulk handler error.");
+        }
+    } else {
+        /*!< Attention: Only use uart hardware connection. */
+    }
+#else
 #if (CONFIG_HARDWARE_CONNECTION == DJI_USE_UART_AND_USB_BULK_DEVICE)
     returnCode = DjiPlatform_RegHalUsbBulkHandler(&usbBulkHandler);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
@@ -413,21 +199,10 @@ void Application::DjiUser_SetupEnvironment()
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         throw std::runtime_error("Register hal network handler error");
     }
-
-//    USER_LOG_INFO("Creating video task...");
-//    if (DjiPlatform_GetHalNetworkHandler() != NULL || DjiPlatform_GetHalUsbBulkHandler() != NULL) {
-//        returnCode = osalHandler.TaskCreate("user_camera_media_task", s_userSendVideoThread, 2048,
-//                                             NULL, &s_userSendVideoThread);
-//        if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//            USER_LOG_ERROR("user send video task create error.");
-//            return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
-//        }
-//	USER_LOG_INFO("Created video task.");
-//    }
-
 #elif (CONFIG_HARDWARE_CONNECTION == DJI_USE_ONLY_UART)
     /*!< Attention: Only use uart hardware connection.
      */
+#endif
 #endif
 
     //Attention: if you want to use camera stream view function, please uncomment it.
@@ -471,13 +246,18 @@ void Application::DjiUser_ApplicationStart()
     // attention: when the program is hand up ctrl-c will generate the coredump file
     signal(SIGTERM, DjiUser_NormalExitHandler);
 
+#if DJI_USE_SDK_CONFIG_BY_JSON
+    DjiUserConfigManager_GetAppInfo(&userInfo);
+#else
     returnCode = DjiUser_FillInUserInfo(&userInfo);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         throw std::runtime_error("Fill user info error, please check user info config.");
     }
+#endif
 
     returnCode = DjiCore_Init(&userInfo);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        sleep(1);
         throw std::runtime_error("Core init error.");
     }
 
@@ -668,42 +448,5 @@ static void DjiUser_NormalExitHandler(int signalNum)
     USER_UTIL_UNUSED(signalNum);
     exit(0);
 }
-
-//T_DjiReturnCode HalNetWork_Init(const char *ipAddr, const char *netMask, T_DjiNetworkHandle *halObj)
-//{
-//	int32_t ret;
-//	char cmdStr[LINUX_CMD_STR_MAX_SIZE];
-//
-//	if (ipAddr == NULL || netMask == NULL)
-//	{
-//		USER_LOG_ERROR("hal network config param error");
-//		return DJI_ERROR_SYSTEM_MODULE_CODE_INVALID_PARAMETER;
-//	}
-//
-//	//Attention: need root permission to config ip addr and netmask.
-//	memset(cmdStr, 0, sizeof(cmdStr));
-//
-//	snprintf(cmdStr, sizeof(cmdStr), "ifconfig %s up", LINUX_NETWORK_DEV);
-//	ret = system(cmdStr);
-//	if (ret != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-//	{
-//		USER_LOG_ERROR("Can't open the network."
-//		"Probably the program not execute with root permission."
-//		"Please use the root permission to execute the program.");
-//		return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
-//	}
-//
-//	snprintf(cmdStr, sizeof(cmdStr), "ifconfig %s %s netmask %s", LINUX_NETWORK_DEV, ipAddr, netMask);
-//	ret = system(cmdStr);
-//	if (ret != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-//	{
-//		USER_LOG_ERROR("Can't config the ip address of network."
-//		"Probably the program not execute with root permission."
-//		"Please use the root permission to execute the program.");
-//		return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
-//	}
-//
-//	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
-//}
 
 /****************** (C) COPYRIGHT DJI Innovations *****END OF FILE****/

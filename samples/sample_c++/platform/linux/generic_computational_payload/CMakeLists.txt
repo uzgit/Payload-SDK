@@ -27,10 +27,12 @@ include_directories(../common)
 include_directories(../manifold2/application)
 
 file(GLOB_RECURSE MODULE_SAMPLE_SRC
-        ../../../module_sample/liveview/*.c*
+        ../../../module_sample/custom_liveview/*.c*
         ../../../module_sample/camera_manager/*.c*
         ../../../module_sample/perception/*.c*
         ../../../module_sample/gimbal/*.c*
+        ../../../module_sample/flight_controller/*.c*
+        ../../../module_sample/hms_manager/*.c*
         ../../../../sample_c/module_sample/*.c
         )
 file(GLOB_RECURSE MODULE_COMMON_SRC ../common/*.c*)
@@ -47,6 +49,7 @@ elseif (DEVICE_SYSTEM_ID MATCHES aarch64)
     add_definitions(-DPLATFORM_ARCH_aarch64=1)
 
     file(READ /proc/device-tree/model RPI_MODEL)
+
     if("${RPI_MODEL}" MATCHES "Raspberry Pi")
 	    message("Raspberry Pi detected - setting LIBRARY_PATH")
 	    set(TOOLCHAIN_NAME arm-linux-gnueabihf-gcc)
@@ -55,12 +58,10 @@ elseif (DEVICE_SYSTEM_ID MATCHES aarch64)
 	    #    else()
 	    #        message("Not a Raspberry Pi**********************************************")
 	    #	    # Your non-Raspberry Pi configurations here
-    endif()
-
+    endif()    
 else ()
     message(FATAL_ERROR "FATAL: Please confirm your platform.")
 endif ()
-
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../common/3rdparty)
 
@@ -85,9 +86,11 @@ if (OpenCV_FOUND)
     execute_process(COMMAND opencv_version OUTPUT_VARIABLE OPENCV_VERSION)
     if (${OPENCV_VERSION} STRLESS "4.0.0")
         add_definitions(-DOPEN_CV_VERSION_3)
-    else()
+
+    else ()
         add_definitions(-DOPEN_CV_VERSION_4)
-    endif()
+
+    endif ()
 else ()
     message(STATUS "Did not find OpenCV in the system, image data is inside RecvContainer as raw data")
 endif ()
