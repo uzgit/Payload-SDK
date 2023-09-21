@@ -24,6 +24,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "test_liveview.hpp"
+#include <iostream>
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -67,6 +68,38 @@ LiveviewSample::~LiveviewSample()
             delete pair.second;
         }
     }
+}
+
+T_DjiReturnCode LiveviewSample::joshua_start_camera_stream(CameraImageCallback callback, void *userData)
+{
+    auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_FPV);
+
+    if ((deocder != streamDecoder.end()) && deocder->second) {
+        deocder->second->init();
+        deocder->second->registerCallback(callback, userData);
+
+        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_FPV, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
+                                           LiveviewConvertH264ToRgbCallback);
+    } else {
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NOT_FOUND;
+    }
+}
+
+T_DjiReturnCode LiveviewSample::joshua_stop_camera_stream()
+{
+    T_DjiReturnCode returnCode;
+
+    returnCode = DjiLiveview_StopH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_FPV, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        return returnCode;
+    }
+
+    auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_FPV);
+    if ((deocder != streamDecoder.end()) && deocder->second) {
+        deocder->second->cleanup();
+    }
+
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 T_DjiReturnCode LiveviewSample::StartFpvCameraStream(CameraImageCallback callback, void *userData)

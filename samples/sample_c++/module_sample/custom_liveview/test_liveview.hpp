@@ -46,6 +46,9 @@ public:
     LiveviewSample();
     ~LiveviewSample();
 
+    T_DjiReturnCode joshua_start_camera_stream(CameraImageCallback callback, void *userData);
+    T_DjiReturnCode joshua_stop_camera_stream();
+
     T_DjiReturnCode StartFpvCameraStream(CameraImageCallback callback, void *userData);
     T_DjiReturnCode StopFpvCameraStream();
 

@@ -155,7 +155,8 @@ void DjiUser_RunCameraStreamViewSample()
 
     s_demoIndex = 1;
     //liveviewSample->StartFpvCameraStream(&DjiUser_ShowRgbImageCallback, &fpvName);
-    liveviewSample->StartFpvCameraStream(&joshua_image_callback, &fpvName);
+    //liveviewSample->StartFpvCameraStream(&joshua_image_callback, &fpvName);
+    liveviewSample->joshua_start_camera_stream(&joshua_image_callback, &fpvName);
     
     cout << "Please enter the 'q' or 'Q' to quit camera stream view\n"
          << endl;
