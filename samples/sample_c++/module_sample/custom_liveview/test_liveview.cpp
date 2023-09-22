@@ -80,8 +80,6 @@ T_DjiReturnCode LiveviewSample::joshua_start_camera_stream(CameraImageCallback c
         deocder->second->init();
         deocder->second->registerCallback(callback, userData);
 
-	cout << "registered callback" << endl;
-
         return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_FPV, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
                                            LiveviewConvertH264ToRgbCallback);
     } else {
