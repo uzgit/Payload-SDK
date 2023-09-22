@@ -38,6 +38,7 @@ extern "C" {
 
 #include "pthread.h"
 #include "dji_camera_image_handler.hpp"
+#include <chrono>
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,6 +70,10 @@ private:
 
     pthread_mutex_t decodemutex;
 
+    int output_image_width  = 640;
+    int output_image_height = 480;
+    bool callback_ready;
+
 #ifdef FFMPEG_INSTALLED
     AVCodecContext *pCodecCtx;
     AVCodec *pCodec;
@@ -79,8 +84,9 @@ private:
     AVFrame *pFrameRGB;
 
     // scaling test
-    AVFrame *scaled_frame;
+    AVFrame *pFrameYUV_copy;
     
+    std::chrono::high_resolution_clock::time_point last_execution_time;
 #endif
     uint8_t *rgbBuf;
     size_t bufSize;
