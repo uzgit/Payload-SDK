@@ -72,7 +72,7 @@ private:
     pthread_mutex_t decodemutex;
 
     int output_image_width  = 640;
-    int output_image_height = 480;
+    int output_image_height = 360;
     bool callback_ready;
 
 #ifdef FFMPEG_INSTALLED
@@ -85,7 +85,7 @@ private:
     AVFrame *pFrameRGB;
 
     // scaling test
-//    AVFrame *pFrameYUV_copy;
+    AVFrame *pFrameYUV_copy;
     
     std::chrono::high_resolution_clock::time_point last_execution_time;
 #endif

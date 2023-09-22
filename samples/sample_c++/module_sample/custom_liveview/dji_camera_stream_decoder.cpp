@@ -105,7 +105,7 @@ bool DJICameraStreamDecoder::init()
         return false;
     }
     
-//    pFrameYUV_copy = nullptr;
+    pFrameYUV_copy = nullptr;
 //    pFrameYUV_copy = av_frame_alloc();
 //    if (!pFrameYUV_copy) {
 //        return false;
@@ -146,10 +146,10 @@ void DJICameraStreamDecoder::cleanup()
         pFrameYUV = nullptr;
     }
     
-//    if (nullptr != pFrameYUV_copy) {
-//        av_free(pFrameYUV_copy);
-//        pFrameYUV_copy = nullptr;
-//    }
+    if (nullptr != pFrameYUV_copy) {
+        av_free(pFrameYUV_copy);
+        pFrameYUV_copy = nullptr;
+    }
     
     if (nullptr != pCodecParserCtx) {
         av_parser_close(pCodecParserCtx);
@@ -193,19 +193,22 @@ void DJICameraStreamDecoder::callbackThreadFunc()
     {
 	if( callback_ready )
 	{
-//auto start = std::chrono::high_resolution_clock::now();		
+auto start = std::chrono::high_resolution_clock::now();		
 		// housekeeping
 		callback_ready = false;
 		
 		// copy pFrameYUV
-		AVFrame* pFrameYUV_copy = av_frame_alloc();
-		pFrameYUV_copy->format = pFrameYUV->format;
-		pFrameYUV_copy->width = pFrameYUV->width;
-		pFrameYUV_copy->height = pFrameYUV->height;
-		AVPixelFormat pixel_format = static_cast<AVPixelFormat>(pFrameYUV_copy->format);
-		int buffer_size = av_image_get_buffer_size(pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
-		uint8_t* buffer = (uint8_t*)av_malloc(buffer_size);
-		av_image_fill_arrays(pFrameYUV_copy->data, pFrameYUV_copy->linesize, buffer, pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
+		if( ! pFrameYUV_copy )
+		{
+			pFrameYUV_copy = av_frame_alloc();
+			pFrameYUV_copy->format = pFrameYUV->format;
+			pFrameYUV_copy->width = pFrameYUV->width;
+			pFrameYUV_copy->height = pFrameYUV->height;
+			AVPixelFormat pixel_format = static_cast<AVPixelFormat>(pFrameYUV_copy->format);
+			int buffer_size = av_image_get_buffer_size(pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
+			uint8_t* buffer = (uint8_t*)av_malloc(buffer_size);
+			av_image_fill_arrays(pFrameYUV_copy->data, pFrameYUV_copy->linesize, buffer, pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
+		}
 		av_frame_copy(pFrameYUV_copy, pFrameYUV);
 
 		// initialize
@@ -251,11 +254,11 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 		}
 
 		// clean up
-		av_free(pFrameYUV_copy);
-		pFrameYUV_copy = nullptr;
-//auto end = std::chrono::high_resolution_clock::now();
-//auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-//std::cout << duration.count() << std::endl;
+//		av_free(pFrameYUV_copy);
+//		pFrameYUV_copy = nullptr;
+auto end = std::chrono::high_resolution_clock::now();
+auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+std::cout << duration.count() << std::endl;
 	}
     }
 }
