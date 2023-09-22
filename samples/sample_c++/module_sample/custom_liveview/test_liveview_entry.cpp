@@ -192,7 +192,7 @@ void DjiUser_RunCameraStreamViewSample()
 static void joshua_image_callback(CameraRGBImage img, void *userData)
 {
     auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-    cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
+    //cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
 
     string name = string(reinterpret_cast<char *>(userData));
 

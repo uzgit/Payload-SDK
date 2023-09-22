@@ -26,6 +26,8 @@
 #include "test_liveview.hpp"
 #include <iostream>
 
+#include <chrono>
+
 /* Private constants ---------------------------------------------------------*/
 
 /* Private types -------------------------------------------------------------*/
@@ -233,10 +235,14 @@ T_DjiReturnCode LiveviewSample::StopTopCameraStream()
 /* Private functions definition-----------------------------------------------*/
 static void LiveviewConvertH264ToRgbCallback(E_DjiLiveViewCameraPosition position, const uint8_t *buf, uint32_t bufLen)
 {
+auto start = std::chrono::high_resolution_clock::now();
     auto deocder = streamDecoder.find(position);
     if ((deocder != streamDecoder.end()) && deocder->second) {
         deocder->second->decodeBuffer(buf, bufLen);
     }
+auto end = std::chrono::high_resolution_clock::now();
+auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+std::cout << duration.count() << std::endl;
 }
 
 /****************** (C) COPYRIGHT DJI Innovations *****END OF FILE****/

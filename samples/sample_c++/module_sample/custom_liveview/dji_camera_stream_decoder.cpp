@@ -30,6 +30,7 @@
 
 #include <libavutil/avutil.h>
 #include <iostream>
+#include <chrono>
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -111,10 +112,10 @@ bool DJICameraStreamDecoder::init()
     // *************************************************************************
 
     pCodecCtx->thread_count = 4;
-    pCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
+    //pCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
     //pCodec = avcodec_find_encoder_by_name("h264_v4l2m2m"); // joshua
     //pCodec = avcodec_find_decoder_by_name("h264"); // joshua
-    //pCodec = avcodec_find_decoder_by_name("h264_v4l2m2m"); // joshua
+    pCodec = avcodec_find_decoder_by_name("h264_v4l2m2m"); // joshua
     if (!pCodec || avcodec_open2(pCodecCtx, pCodec, nullptr) < 0) {
         return false;
     }
@@ -133,6 +134,13 @@ bool DJICameraStreamDecoder::init()
     if (!pFrameRGB) {
         return false;
     }
+    
+    scaled_frame = av_frame_alloc();
+    if (!scaled_frame) {
+        return false;
+    }
+    scaled_frame->width  = 640;
+    scaled_frame->height = 480;
 
     pSwsCtx = nullptr;
 
@@ -140,8 +148,6 @@ bool DJICameraStreamDecoder::init()
 #endif
     initSuccess = true;
     pthread_mutex_unlock(&decodemutex);
-
-    
 
     std::cout << "at end of stream decoder init!" << std::endl;
     return true;
@@ -163,7 +169,12 @@ void DJICameraStreamDecoder::cleanup()
         av_free(pFrameYUV);
         pFrameYUV = nullptr;
     }
-
+    
+    if (nullptr != scaled_frame) {
+        av_free(scaled_frame);
+        scaled_frame = nullptr;
+    }
+    
     if (nullptr != pCodecParserCtx) {
         av_parser_close(pCodecParserCtx);
         pCodecParserCtx = nullptr;
@@ -215,8 +226,72 @@ void DJICameraStreamDecoder::callbackThreadFunc()
     }
 }
 
+//void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
+//{
+//    const uint8_t *pData = buf;
+//    int remainingLen = bufLen;
+//    int processedLen = 0;
+//
+//#ifdef FFMPEG_INSTALLED
+//    AVPacket pkt;
+//    av_init_packet(&pkt);
+//    pthread_mutex_lock(&decodemutex);
+//    while (remainingLen > 0) {
+//        if (!pCodecParserCtx || !pCodecCtx) {
+//            //DSTATUS("Invalid decoder ctx.");
+//            break;
+//        }
+//        processedLen = av_parser_parse2(pCodecParserCtx, pCodecCtx,
+//                                        &pkt.data, &pkt.size,
+//                                        pData, remainingLen,
+//                                        AV_NOPTS_VALUE, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
+//        remainingLen -= processedLen;
+//        pData += processedLen;
+//
+//        if (pkt.size > 0) {
+//            int gotPicture = 0;
+//            avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
+//
+//            if (!gotPicture) {
+//                ////DSTATUS_PRIVATE("Got Frame, but no picture\n");
+//                continue;
+//            } else {
+//                int w = pFrameYUV->width;
+//                int h = pFrameYUV->height;
+//                //DSTATUS_PRIVATE("Got picture! size=%dx%d\n", w, h);
+//                if (nullptr == pSwsCtx) {
+//                    pSwsCtx = sws_getContext(w, h, pCodecCtx->pix_fmt,
+//                                             w, h, AV_PIX_FMT_RGB24,
+//                                             4, nullptr, nullptr, nullptr);
+//                }
+//
+//                if (nullptr == rgbBuf) {
+//                    bufSize = avpicture_get_size(AV_PIX_FMT_RGB24, w, h);
+//                    rgbBuf = (uint8_t *) av_malloc(bufSize);
+//                    avpicture_fill((AVPicture *) pFrameRGB, rgbBuf, AV_PIX_FMT_RGB24, w, h);
+//                }
+//
+//                if (nullptr != pSwsCtx && nullptr != rgbBuf) {
+//                    sws_scale(pSwsCtx,
+//                              (uint8_t const *const *) pFrameYUV->data, pFrameYUV->linesize, 0, pFrameYUV->height,
+//                              pFrameRGB->data, pFrameRGB->linesize);
+//
+//                    pFrameRGB->height = h;
+//                    pFrameRGB->width = w;
+//
+//                    decodedImageHandler.writeNewImageWithLock(pFrameRGB->data[0], bufSize, w, h);
+//                }
+//            }
+//        }
+//    }
+//    pthread_mutex_unlock(&decodemutex);
+//    av_free_packet(&pkt);
+//#endif
+//}
+
 void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 {
+//auto start = std::chrono::high_resolution_clock::now();
     const uint8_t *pData = buf;
     int remainingLen = bufLen;
     int processedLen = 0;
@@ -226,8 +301,9 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
     av_init_packet(&pkt);
     pthread_mutex_lock(&decodemutex);
     while (remainingLen > 0) {
-        if (!pCodecParserCtx || !pCodecCtx) {
-            //DSTATUS("Invalid decoder ctx.");
+        if (!pCodecParserCtx || !pCodecCtx)
+	{
+	    std::cerr << "Invalid decoder context." << std::endl;
             break;
         }
         processedLen = av_parser_parse2(pCodecParserCtx, pCodecCtx,
@@ -237,31 +313,41 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
         remainingLen -= processedLen;
         pData += processedLen;
 
-        if (pkt.size > 0) {
+        if (pkt.size > 0)
+	{
             int gotPicture = 0;
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
 
-            if (!gotPicture) {
+	    if (!gotPicture)
+	    {
                 ////DSTATUS_PRIVATE("Got Frame, but no picture\n");
                 continue;
-            } else {
-                int w = pFrameYUV->width;
-                int h = pFrameYUV->height;
-                ////DSTATUS_PRIVATE("Got picture! size=%dx%d\n", w, h);
-
-                if (nullptr == pSwsCtx) {
-                    pSwsCtx = sws_getContext(w, h, pCodecCtx->pix_fmt,
+            }
+	    else
+	    {
+		// ************************
+//                int w = pFrameYUV->width;
+//                int h = pFrameYUV->height;
+		// ************************
+                int w = 640;
+                int h = 480;
+                //DSTATUS_PRIVATE("Got picture! size=%dx%d\n", w, h);
+                if (nullptr == pSwsCtx)
+		{
+                    pSwsCtx = sws_getContext(pFrameYUV->width, pFrameYUV->height, pCodecCtx->pix_fmt,
                                              w, h, AV_PIX_FMT_RGB24,
                                              4, nullptr, nullptr, nullptr);
                 }
 
-                if (nullptr == rgbBuf) {
+                if (nullptr == rgbBuf)
+		{
                     bufSize = avpicture_get_size(AV_PIX_FMT_RGB24, w, h);
                     rgbBuf = (uint8_t *) av_malloc(bufSize);
                     avpicture_fill((AVPicture *) pFrameRGB, rgbBuf, AV_PIX_FMT_RGB24, w, h);
                 }
 
-                if (nullptr != pSwsCtx && nullptr != rgbBuf) {
+                if (nullptr != pSwsCtx && nullptr != rgbBuf)
+		{
                     sws_scale(pSwsCtx,
                               (uint8_t const *const *) pFrameYUV->data, pFrameYUV->linesize, 0, pFrameYUV->height,
                               pFrameRGB->data, pFrameRGB->linesize);
@@ -277,6 +363,9 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
     pthread_mutex_unlock(&decodemutex);
     av_free_packet(&pkt);
 #endif
+//auto end = std::chrono::high_resolution_clock::now();
+//auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+//std::cout << duration.count() << std::endl;
 }
 
 bool DJICameraStreamDecoder::registerCallback(CameraImageCallback f, void *param)

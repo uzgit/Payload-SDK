@@ -77,6 +77,10 @@ private:
 
     AVFrame *pFrameYUV;
     AVFrame *pFrameRGB;
+
+    // scaling test
+    AVFrame *scaled_frame;
+    
 #endif
     uint8_t *rgbBuf;
     size_t bufSize;
