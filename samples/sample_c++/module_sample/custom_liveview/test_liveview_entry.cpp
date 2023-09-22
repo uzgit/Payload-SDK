@@ -153,7 +153,7 @@ void DjiUser_RunCameraStreamViewSample()
 //            return;
 //    }
 
-    s_demoIndex = 1;
+    s_demoIndex = 0;
     //liveviewSample->StartFpvCameraStream(&DjiUser_ShowRgbImageCallback, &fpvName);
     //liveviewSample->StartFpvCameraStream(&joshua_image_callback, &fpvName);
     liveviewSample->joshua_start_camera_stream(&joshua_image_callback, &fpvName);

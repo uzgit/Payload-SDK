@@ -33,6 +33,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
+#include <libavutil/imgutils.h>
 #endif
 }
 
@@ -84,7 +85,7 @@ private:
     AVFrame *pFrameRGB;
 
     // scaling test
-    AVFrame *pFrameYUV_copy;
+//    AVFrame *pFrameYUV_copy;
     
     std::chrono::high_resolution_clock::time_point last_execution_time;
 #endif
