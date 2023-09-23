@@ -189,10 +189,17 @@ void *DJICameraStreamDecoder::callbackThreadEntry(void *p)
 
 void DJICameraStreamDecoder::callbackThreadFunc()
 {
+    auto cb_last_execution_time = std::chrono::high_resolution_clock::now();
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
     while (cbThreadIsRunning)
     {
-	if( callback_ready )
+	now = std::chrono::high_resolution_clock::now();
+        duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
+	if( callback_ready && duration.count() > 70 )
+	//if( callback_ready )
 	{
+		cb_last_execution_time = now;
 auto start = std::chrono::high_resolution_clock::now();		
 		// housekeeping
 		callback_ready = false;
@@ -285,33 +292,50 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 	    std::cerr << "Invalid decoder context." << std::endl;
             break;
         }
+std::cout << "before" << std::endl;
         processedLen = av_parser_parse2(pCodecParserCtx, pCodecCtx,
                                         &pkt.data, &pkt.size,
                                         pData, remainingLen,
                                         AV_NOPTS_VALUE, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
+std::cout << "after" << std::endl;
         remainingLen -= processedLen;
         pData += processedLen;
 
         if (pkt.size > 0)
 	{
             int gotPicture = 0;
+
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
+	    if( pFrameYUV->key_frame )
+	    {
+	    	std::cout << "keyframe" << std::endl;
+	    }
 
 	    std::chrono::high_resolution_clock::time_point now = std::chrono::system_clock::now();
 	    std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_execution_time);
-	    if( duration.count() > 50 ) // this should accomplish 20 Hz but it actually accomplishes 15 Hz
+	    last_execution_time = std::chrono::system_clock::now();
+	    if (!gotPicture)
 	    {
-		    last_execution_time = std::chrono::system_clock::now();
-		    if (!gotPicture)
-		    {
-			////DSTATUS_PRIVATE("Got Frame, but no picture\n");
-			continue;
-		    }
-		    else
-		    {
-			callback_ready = true;
-		    }
+		////DSTATUS_PRIVATE("Got Frame, but no picture\n");
+		continue;
 	    }
+	    else
+	    {
+		callback_ready = true;
+	    }
+//	    if( duration.count() > 50 ) // this should accomplish 20 Hz but it actually accomplishes 15 Hz
+//	    {
+//		    last_execution_time = std::chrono::system_clock::now();
+//		    if (!gotPicture)
+//		    {
+//			////DSTATUS_PRIVATE("Got Frame, but no picture\n");
+//			continue;
+//		    }
+//		    else
+//		    {
+//			callback_ready = true;
+//		    }
+//	    }
         }
     }
     pthread_mutex_unlock(&decodemutex);

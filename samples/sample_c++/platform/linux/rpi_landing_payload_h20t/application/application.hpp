@@ -1,7 +1,7 @@
 /**
  ********************************************************************
- * @file    test_liveview.hpp
- * @brief   This is the header file for "test_liveview.cpp", defining the structure and
+ * @file    dji_application.hpp
+ * @brief   This is the header file for "dji_application.cpp", defining the structure and
  * (exported) function prototypes.
  *
  * @copyright (c) 2021 DJI. All rights reserved.
@@ -24,13 +24,14 @@
  */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef TEST_LIVEVIEW_H
-#define TEST_LIVEVIEW_H
+#ifndef APPLICATION_H
+#define APPLICATION_H
 
 /* Includes ------------------------------------------------------------------*/
-#include "dji_liveview.h"
-#include <map>
-#include "dji_camera_stream_decoder.hpp"
+#include <iostream>
+#include <fstream>
+#include "dji_typedef.h"
+#include "dji_core.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,28 +42,18 @@ extern "C" {
 /* Exported types ------------------------------------------------------------*/
 using namespace std;
 
-class LiveviewSample {
+class Application {
 public:
-    LiveviewSample();
-    ~LiveviewSample();
+    Application(int argc, char **argv);
+    ~Application();
 
-    T_DjiReturnCode joshua_start_camera_stream_fpv(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode joshua_stop_camera_stream_fpv();
-    
-    T_DjiReturnCode joshua_start_camera_stream_main(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode joshua_stop_camera_stream_main();
-
-    T_DjiReturnCode StartFpvCameraStream(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode StopFpvCameraStream();
-
-    T_DjiReturnCode StartMainCameraStream(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode StopMainCameraStream();
-
-    T_DjiReturnCode StartViceCameraStream(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode StopViceCameraStream();
-
-    T_DjiReturnCode StartTopCameraStream(CameraImageCallback callback, void *userData);
-    T_DjiReturnCode StopTopCameraStream();
+private:
+    static void DjiUser_SetupEnvironment(int argc, char **argv);
+    static void DjiUser_ApplicationStart();
+    static T_DjiReturnCode DjiUser_PrintConsole(const uint8_t *data, uint16_t dataLen);
+    static T_DjiReturnCode DjiUser_LocalWrite(const uint8_t *data, uint16_t dataLen);
+    static T_DjiReturnCode DjiUser_FillInUserInfo(T_DjiUserInfo *userInfo);
+    static T_DjiReturnCode DjiUser_LocalWriteFsInit(const char *path);
 };
 
 /* Exported functions --------------------------------------------------------*/
@@ -72,5 +63,5 @@ public:
 }
 #endif
 
-#endif // TEST_LIVEVIEW_H
+#endif // APPLICATION_H
 /************************ (C) COPYRIGHT DJI Innovations *******END OF FILE******/

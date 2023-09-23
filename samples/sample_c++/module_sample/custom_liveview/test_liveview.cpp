@@ -72,8 +72,9 @@ LiveviewSample::~LiveviewSample()
     }
 }
 
-T_DjiReturnCode LiveviewSample::joshua_start_camera_stream(CameraImageCallback callback, void *userData)
+T_DjiReturnCode LiveviewSample::joshua_start_camera_stream_fpv(CameraImageCallback callback, void *userData)
 {
+    cout << "starting FPV stream" << endl;
     auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_FPV);
 
     if ((deocder != streamDecoder.end()) && deocder->second) {
@@ -87,7 +88,7 @@ T_DjiReturnCode LiveviewSample::joshua_start_camera_stream(CameraImageCallback c
     }
 }
 
-T_DjiReturnCode LiveviewSample::joshua_stop_camera_stream()
+T_DjiReturnCode LiveviewSample::joshua_stop_camera_stream_fpv()
 {
     T_DjiReturnCode returnCode;
 
@@ -97,6 +98,39 @@ T_DjiReturnCode LiveviewSample::joshua_stop_camera_stream()
     }
 
     auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_FPV);
+    if ((deocder != streamDecoder.end()) && deocder->second) {
+        deocder->second->cleanup();
+    }
+
+    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+T_DjiReturnCode LiveviewSample::joshua_start_camera_stream_main(CameraImageCallback callback, void *userData)
+{
+    cout << "starting main stream" << endl;
+    auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_NO_1);
+
+    if ((deocder != streamDecoder.end()) && deocder->second) {
+        deocder->second->init();
+        deocder->second->registerCallback(callback, userData);
+
+        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_NO_1, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
+                                           LiveviewConvertH264ToRgbCallback);
+    } else {
+        return DJI_ERROR_SYSTEM_MODULE_CODE_NOT_FOUND;
+    }
+}
+
+T_DjiReturnCode LiveviewSample::joshua_stop_camera_stream_main()
+{
+    T_DjiReturnCode returnCode;
+
+    returnCode = DjiLiveview_StopH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_NO_1, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        return returnCode;
+    }
+
+    auto deocder = streamDecoder.find(DJI_LIVEVIEW_CAMERA_POSITION_NO_1);
     if ((deocder != streamDecoder.end()) && deocder->second) {
         deocder->second->cleanup();
     }

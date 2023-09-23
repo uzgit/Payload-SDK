@@ -72,7 +72,7 @@ private:
     pthread_mutex_t decodemutex;
 
     int output_image_width  = 640;
-    int output_image_height = 360;
+    int output_image_height = 480;
     bool callback_ready;
 
 #ifdef FFMPEG_INSTALLED
