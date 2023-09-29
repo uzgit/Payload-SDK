@@ -34,7 +34,10 @@ if (USE_SYSTEM_ARCH MATCHES LINUX)
     #add_subdirectory(samples/sample_c++/platform/linux/rpi_landing_payload_h20t)
     
     execute_process(COMMAND uname -m OUTPUT_VARIABLE DEVICE_SYSTEM_ID)
-    if (DEVICE_SYSTEM_ID MATCHES x86_64)
+    if (DEVICE_SYSTEM_ID MATCHES armv7l)
+	message("Raspberry Pi 32-bit detected - setting LIBRARY_PATH")
+	set(LIBRARY_PATH psdk_lib/lib/arm-linux-gnueabihf-gcc) 
+    elseif (DEVICE_SYSTEM_ID MATCHES x86_64)
 	message("Detected architecture: x86_64")
         set(LIBRARY_PATH psdk_lib/lib/x86_64-linux-gnu-gcc)
     elseif (DEVICE_SYSTEM_ID MATCHES aarch64)
@@ -44,16 +47,6 @@ if (USE_SYSTEM_ARCH MATCHES LINUX)
         message(FATAL_ERROR "FATAL: Please confirm your platform.")
     endif ()
 
-    file(READ /proc/device-tree/model RPI_MODEL)
-
-    if("${RPI_MODEL}" MATCHES "Raspberry Pi")
-	    message("Raspberry Pi detected - setting LIBRARY_PATH")
-	set(LIBRARY_PATH psdk_lib/lib/arm-linux-gnueabihf-gcc) 
-	    # Your Raspberry Pi-specific configurations here
-	    #    else()
-	    #        message("Not a Raspberry Pi**********************************************")
-	    #	    # Your non-Raspberry Pi configurations here
-    endif()
     message("LIBRARY_PATH: ${LIBRARY_PATH}")
 
     install(FILES ${LIBRARY_PATH}/libpayloadsdk.a

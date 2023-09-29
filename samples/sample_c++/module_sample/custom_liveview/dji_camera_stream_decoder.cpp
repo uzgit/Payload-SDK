@@ -73,6 +73,9 @@ DJICameraStreamDecoder::~DJICameraStreamDecoder()
 
 bool DJICameraStreamDecoder::init()
 {
+    std::cout << "setting ffmpeg loglevel to QUIET" << std::endl;
+    av_log_set_level(AV_LOG_QUIET);
+
     pthread_mutex_lock(&decodemutex);
 
     if (true == initSuccess) {
@@ -106,10 +109,6 @@ bool DJICameraStreamDecoder::init()
     }
     
     pFrameYUV_copy = nullptr;
-//    pFrameYUV_copy = av_frame_alloc();
-//    if (!pFrameYUV_copy) {
-//        return false;
-//    }
 
     pFrameRGB = av_frame_alloc();
     if (!pFrameRGB) {
@@ -197,10 +196,8 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 	now = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
 	if( callback_ready && duration.count() > 70 )
-	//if( callback_ready )
 	{
 		cb_last_execution_time = now;
-auto start = std::chrono::high_resolution_clock::now();		
 		// housekeeping
 		callback_ready = false;
 		
@@ -259,13 +256,6 @@ auto start = std::chrono::high_resolution_clock::now();
 			    (*cb)(copyOfImage, cbUserParam);
 			}
 		}
-
-		// clean up
-//		av_free(pFrameYUV_copy);
-//		pFrameYUV_copy = nullptr;
-auto end = std::chrono::high_resolution_clock::now();
-auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-std::cout << duration.count() << std::endl;
 	}
     }
 }
@@ -292,12 +282,10 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 	    std::cerr << "Invalid decoder context." << std::endl;
             break;
         }
-std::cout << "before" << std::endl;
         processedLen = av_parser_parse2(pCodecParserCtx, pCodecCtx,
                                         &pkt.data, &pkt.size,
                                         pData, remainingLen,
                                         AV_NOPTS_VALUE, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
-std::cout << "after" << std::endl;
         remainingLen -= processedLen;
         pData += processedLen;
 
@@ -306,10 +294,6 @@ std::cout << "after" << std::endl;
             int gotPicture = 0;
 
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
-	    if( pFrameYUV->key_frame )
-	    {
-	    	std::cout << "keyframe" << std::endl;
-	    }
 
 	    std::chrono::high_resolution_clock::time_point now = std::chrono::system_clock::now();
 	    std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_execution_time);
@@ -323,19 +307,6 @@ std::cout << "after" << std::endl;
 	    {
 		callback_ready = true;
 	    }
-//	    if( duration.count() > 50 ) // this should accomplish 20 Hz but it actually accomplishes 15 Hz
-//	    {
-//		    last_execution_time = std::chrono::system_clock::now();
-//		    if (!gotPicture)
-//		    {
-//			////DSTATUS_PRIVATE("Got Frame, but no picture\n");
-//			continue;
-//		    }
-//		    else
-//		    {
-//			callback_ready = true;
-//		    }
-//	    }
         }
     }
     pthread_mutex_unlock(&decodemutex);

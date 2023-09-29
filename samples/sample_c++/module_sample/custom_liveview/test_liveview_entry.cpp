@@ -156,8 +156,8 @@ void DjiUser_RunCameraStreamViewSample()
     s_demoIndex = 0;
     //liveviewSample->StartFpvCameraStream(&DjiUser_ShowRgbImageCallback, &fpvName);
     //liveviewSample->StartFpvCameraStream(&joshua_image_callback, &fpvName);
-    liveviewSample->joshua_start_camera_stream_fpv(&joshua_image_callback, &fpvName);
-    //liveviewSample->joshua_start_camera_stream_main(&joshua_image_callback, &mainName);
+    //liveviewSample->joshua_start_camera_stream_fpv(&joshua_image_callback, &fpvName);
+    liveviewSample->joshua_start_camera_stream_main(&joshua_image_callback, &mainName);
     
     cout << "Please enter the 'q' or 'Q' to quit camera stream view\n"
          << endl;
@@ -192,8 +192,8 @@ void DjiUser_RunCameraStreamViewSample()
 
 static void joshua_image_callback(CameraRGBImage img, void *userData)
 {
-    auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-    cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
+//    auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+//    cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
 
     string name = string(reinterpret_cast<char *>(userData));
 
