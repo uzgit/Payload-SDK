@@ -293,6 +293,13 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 	{
             int gotPicture = 0;
 
+//	    std::cout << "here" << std::endl;
+//	    pkt.data += 3000;
+//	    pkt.size -= 3000;
+//	    for(int i = 0; i < 1000; i ++)
+//	    {
+//		    pkt.data[i+10000] = 0;
+//	    }
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
 
 	    std::chrono::high_resolution_clock::time_point now = std::chrono::system_clock::now();
