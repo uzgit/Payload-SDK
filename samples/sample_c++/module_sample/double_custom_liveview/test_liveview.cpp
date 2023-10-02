@@ -83,7 +83,7 @@ T_DjiReturnCode LiveviewSample::joshua_start_file_stream(CameraImageCallback cal
 
     decoder->registerCallback(callback, userData);
 
-    decoder->read_saved_h264_stream_from_file("/home/joshua/Videos/h20t.h264");
+    decoder->read_saved_h264_stream_from_file("/home/joshua/Videos/p1_apriltag_1.h264");
 
     delete decoder;
 

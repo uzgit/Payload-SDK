@@ -204,7 +204,7 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 		cb_last_execution_time = now;
 		// housekeeping
 		callback_ready = false;
-		
+
 		// copy pFrameYUV
 		if( ! pFrameYUV_copy )
 		{
@@ -218,6 +218,22 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 			av_image_fill_arrays(pFrameYUV_copy->data, pFrameYUV_copy->linesize, buffer, pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
 		}
 		av_frame_copy(pFrameYUV_copy, pFrameYUV);
+
+//		// zero the bottom 360 lines
+//		int height = pFrameYUV_copy->height;
+//		int width = pFrameYUV_copy->width;
+//
+//		// Iterate over the bottom 360 lines
+//		for (int y = height - 360; y < height; y++) {
+//		    // Get a pointer to the start of the current line
+//		    uint8_t *line = pFrameYUV_copy->data[0] + y * pFrameYUV_copy->linesize[0];
+//
+//		    // Set each pixel in the line to black
+//		    for (int x = 0; x < width; x++) {
+//			line[x] = 0;  // Set the pixel value to 0 (black)
+//		    }
+//		}
+//		//
 
 		// initialize
 		if (nullptr == pSwsCtx)
@@ -238,8 +254,10 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 		// create an RGB image from the YUV image
 		if (nullptr != pSwsCtx && nullptr != rgbBuf)
 		{
-			pFrameRGB->height = output_image_height;
-			pFrameRGB->width  = output_image_width;
+			pFrameRGB->height = pFrameYUV_copy->height;
+			pFrameRGB->width  = pFrameYUV_copy->width;
+//			pFrameRGB->height = output_image_height;
+//			pFrameRGB->width  = output_image_width;
 			CameraRGBImage copyOfImage;
 			
 			// seems like most of the latency here is probably from moving data in memory
@@ -263,6 +281,15 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 	}
     }
 }
+
+//int findStartCode(const uint8_t* startCode, const uint8_t* data, size_t dataSize) {
+//    for (size_t i = 0; i < dataSize - 3; ++i) {
+//        if (data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x01 && data[i + 3] == (startCode & 0xFF)) {
+//            return static_cast<int>(i + 3);
+//        }
+//    }
+//    return -1; // Start code not found.
+//}
 
 void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 {
@@ -293,9 +320,16 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
         remainingLen -= processedLen;
         pData += processedLen;
 
+//	const uint8_t image_start_code[] = {0x00, 0x00, 0x00, 0x01};
+//	int position = findStartCode(image_start_code, buf, bufLen);
+//	std::cout << "\timage start code at: " << position << std::endl;
+
         if (pkt.size > 0)
 	{
             int gotPicture = 0;
+
+//	    pkt.data += 1000;
+//	    pkt.size -= 1000;
 
 //	    std::cout << "here" << std::endl;
 //	    pkt.data += 3000;
@@ -305,6 +339,44 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 //		    pkt.data[i+10000] = 0;
 //	    }
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
+
+//	    // Get the frame type (I, P, B, etc.)
+//	    AVPictureType frameType = pFrameYUV->pict_type;
+//
+//	    // Convert the frame type to a human-readable string
+//	    std::string frameTypeName;
+//	    switch (frameType) {
+//		case AV_PICTURE_TYPE_I:
+//		    frameTypeName = "I-frame (Intra-frame)";
+//		    break;
+//		case AV_PICTURE_TYPE_P:
+//		    frameTypeName = "P-frame (Predicted frame)";
+//		    break;
+//		case AV_PICTURE_TYPE_B:
+//		    frameTypeName = "B-frame (Bi-directional predicted frame)";
+//		    break;
+//		default:
+//		    frameTypeName = "Unknown frame type";
+//		    break;
+//	    }
+//	    std::cout << frameTypeName << std::endl;
+
+//		// zero the bottom 360 lines
+//		int height = pFrameYUV->height;
+//		int width = pFrameYUV->width;
+//
+//		// Iterate over the bottom 360 lines
+//		for (int y = height - 360; y < height; y++) {
+//		    // Get a pointer to the start of the current line
+//		    uint8_t *line = pFrameYUV->data[0] + y * pFrameYUV->linesize[0];
+//
+//		    // Set each pixel in the line to black
+//		    for (int x = 0; x < width; x++) {
+//			line[x] = 0;  // Set the pixel value to 0 (black)
+//		    }
+//		}
+//		//
+//	    pFrameYUV->height = 1080;
 
 	    std::chrono::high_resolution_clock::time_point now = std::chrono::system_clock::now();
 	    std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_execution_time);
@@ -327,7 +399,7 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 
 bool DJICameraStreamDecoder::registerCallback(CameraImageCallback f, void *param)
 {
-	std::cout << "registering camera image callback" << std::endl;
+//	std::cout << "registering camera image callback" << std::endl;
     cb = f;
     cbUserParam = param;
 
@@ -398,7 +470,7 @@ int DJICameraStreamDecoder::read_saved_h264_stream_from_file(const char * filena
     while (av_read_frame(format_context, &packet) >= 0) {
 	i ++;
         // Print the packet size
-        std::cout << "packet_size: " << packet.size << std::endl;
+//        std::cout << "packet_size : " << packet.size << std::endl;
 
 	decodeBuffer( packet.data, packet.size );
 
@@ -411,7 +483,7 @@ int DJICameraStreamDecoder::read_saved_h264_stream_from_file(const char * filena
     // Clean up
     avformat_close_input(&format_context);
 
-    std::cout << "Processed " << i << " packets" << std::endl;
+//    std::cout << "Processed " << i << " packets" << std::endl;
 }
 
 

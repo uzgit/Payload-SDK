@@ -195,7 +195,8 @@ void DJICameraStreamDecoder::callbackThreadFunc()
     {
 	now = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
-	if( callback_ready && duration.count() > 70 )
+	//if( callback_ready && duration.count() > 70 )
+	if( callback_ready )
 	{
 		cb_last_execution_time = now;
 		// housekeeping
@@ -218,8 +219,12 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 		// initialize
 		if (nullptr == pSwsCtx)
 		{
-		    pSwsCtx = sws_getContext(pFrameYUV_copy->width, pFrameYUV_copy->height, pCodecCtx->pix_fmt,
-					     output_image_width, output_image_height, AV_PIX_FMT_RGB24,
+		    pSwsCtx = sws_getContext(pFrameYUV_copy->width,
+				             pFrameYUV_copy->height,
+					     pCodecCtx->pix_fmt,
+					     output_image_width,
+					     output_image_height,
+					     AV_PIX_FMT_RGB24,
 					     SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
 		}
 
@@ -241,8 +246,12 @@ void DJICameraStreamDecoder::callbackThreadFunc()
 			// seems like most of the latency here is probably from moving data in memory
 			// maybe memory mapping can help?
 			sws_scale(pSwsCtx,
-			      (uint8_t const *const *) pFrameYUV_copy->data, pFrameYUV_copy->linesize, 0, pFrameYUV_copy->height,
-			      pFrameRGB->data, pFrameRGB->linesize);
+				  (uint8_t const *const *) pFrameYUV_copy->data,
+				  pFrameYUV_copy->linesize,
+				  0,
+				  pFrameYUV_copy->height,
+				  pFrameRGB->data,
+				  pFrameRGB->linesize);
 
 			decodedImageHandler.writeNewImageWithLock(pFrameRGB->data[0], bufSize, output_image_width, output_image_height);
 			
@@ -302,6 +311,7 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
 //	    }
             avcodec_decode_video2(pCodecCtx, pFrameYUV, &gotPicture, &pkt);
 
+//	    std::cout << "received dimensions: " << pFrameYUV->width << " x " << pFrameYUV->height << std::endl;
 	    std::chrono::high_resolution_clock::time_point now = std::chrono::system_clock::now();
 	    std::chrono::milliseconds duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_execution_time);
 	    last_execution_time = std::chrono::system_clock::now();

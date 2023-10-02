@@ -91,7 +91,7 @@ private:
     
     std::chrono::high_resolution_clock::time_point last_execution_time;
 
-    const char* filename = "/home/joshua/Videos/h20t_v4l2m2m.h264";
+    const char* filename = "/home/joshua/Videos/p1_apriltag_2.h264";
     std::ofstream h264file;
 #endif
     uint8_t *rgbBuf;

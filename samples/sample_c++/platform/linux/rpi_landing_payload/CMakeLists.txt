@@ -25,6 +25,7 @@ include_directories(../../../module_sample)
 include_directories(../../../../sample_c/module_sample)
 include_directories(../common)
 include_directories(../manifold2/application)
+include_directories(../../../../../../../apriltag)
 
 file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../../module_sample/custom_liveview/*.c*
@@ -143,6 +144,7 @@ if (NOT EXECUTABLE_OUTPUT_PATH)
 endif ()
 
 target_link_libraries(${PROJECT_NAME} m)
+target_link_libraries(${PROJECT_NAME} apriltag)
 
 add_custom_command(TARGET ${PROJECT_NAME}
         PRE_LINK COMMAND cmake ..

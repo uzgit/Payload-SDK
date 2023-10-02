@@ -31,6 +31,9 @@
 
 #ifdef __cplusplus
 extern "C" {
+#include <apriltag/apriltag.h>
+#include <apriltag/tagCustom48h12.h>
+#include <apriltag/common/getopt.h>
 #endif
 
 /* Exported constants --------------------------------------------------------*/

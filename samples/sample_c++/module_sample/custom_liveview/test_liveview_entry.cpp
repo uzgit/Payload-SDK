@@ -80,6 +80,11 @@ static void joshua_image_callback(CameraRGBImage img, void *userData);
 static void DjiUser_ShowRgbImageCallback(CameraRGBImage img, void *userData);
 static T_DjiReturnCode DjiUser_GetCurrentFileDirPath(const char *filePath, uint32_t pathBufferSize, char *dirPath);
 
+// ****************************************************************************
+apriltag_family_t *tf = nullptr;
+apriltag_detector_t *td = nullptr;
+// ****************************************************************************
+
 /* Exported functions definition ---------------------------------------------*/
 void DjiUser_RunCameraStreamViewSample()
 {
@@ -202,6 +207,64 @@ static void joshua_image_callback(CameraRGBImage img, void *userData)
     if (s_demoIndex == 0)
     {
         cvtColor(mat, mat, COLOR_RGB2BGR);
+
+	// ***************************************************************************
+	if( nullptr == tf )
+	{
+	    tf = tagCustom48h12_create();
+	    td = apriltag_detector_create();
+	    apriltag_detector_add_family(td, tf);
+
+	    td->quad_decimate = 2;
+	    td->quad_sigma    = 0;
+	    td->nthreads      = 4;
+	    td->debug         = false;
+	    td->refine_edges  = false;
+	}
+	cv::Mat gray;
+	cvtColor(mat, gray, COLOR_BGR2GRAY);
+	image_u8_t im = { .width = gray.cols,
+            .height = gray.rows,
+            .stride = gray.cols,
+            .buf = gray.data
+        };
+	zarray_t *detections = apriltag_detector_detect(td, &im);
+
+        // Draw detection outlines
+        for (int i = 0; i < zarray_size(detections); i++) {
+            apriltag_detection_t *det;
+            zarray_get(detections, i, &det);
+            line(mat, Point(det->p[0][0], det->p[0][1]),
+                     Point(det->p[1][0], det->p[1][1]),
+                     Scalar(0, 0xff, 0), 2);
+            line(mat, Point(det->p[0][0], det->p[0][1]),
+                     Point(det->p[3][0], det->p[3][1]),
+                     Scalar(0, 0, 0xff), 2);
+            line(mat, Point(det->p[1][0], det->p[1][1]),
+                     Point(det->p[2][0], det->p[2][1]),
+                     Scalar(0xff, 0, 0), 2);
+            line(mat, Point(det->p[2][0], det->p[2][1]),
+                     Point(det->p[3][0], det->p[3][1]),
+                     Scalar(0xff, 0, 0), 2);
+
+            stringstream ss;
+            ss << det->id;
+            String text = ss.str();
+            int fontface = FONT_HERSHEY_SCRIPT_SIMPLEX;
+            double fontscale = 1.0;
+            int baseline;
+            Size textsize = getTextSize(text, fontface, fontscale, 2,
+                                            &baseline);
+            putText(mat, text, Point(det->c[0]-textsize.width/2,
+                                       det->c[1]+textsize.height/2),
+                    fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
+        }
+        apriltag_detections_destroy(detections);	
+	// ***************************************************************************
+
+//    auto time = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+//    cout << time << endl;
+
         imshow(name, mat);
     }
     else if (s_demoIndex == 1)
