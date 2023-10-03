@@ -28,6 +28,8 @@
 #include "test_liveview_entry.hpp"
 #include "test_liveview.hpp"
 
+#include "fc_subscription/test_fc_subscription.h"
+
 #ifdef OPEN_CV_INSTALLED
 
 #include "opencv2/opencv.hpp"
@@ -35,6 +37,7 @@
 #include "opencv2/highgui/highgui.hpp"
 #include "../../../sample_c/module_sample/utils/util_misc.h"
 
+#include <pthread.h>
 #include <chrono>
 
 using namespace cv;
@@ -81,9 +84,16 @@ static void DjiUser_ShowRgbImageCallback(CameraRGBImage img, void *userData);
 static T_DjiReturnCode DjiUser_GetCurrentFileDirPath(const char *filePath, uint32_t pathBufferSize, char *dirPath);
 
 // ****************************************************************************
+//void* subscriber_function(void* arg);
+// ****************************************************************************
 apriltag_family_t *tf = nullptr;
 apriltag_detector_t *td = nullptr;
 // ****************************************************************************
+
+void* subscriber_function(void* arg)
+{
+	DjiTest_FcSubscriptionRunSample();
+}
 
 /* Exported functions definition ---------------------------------------------*/
 void DjiUser_RunCameraStreamViewSample()
@@ -158,11 +168,19 @@ void DjiUser_RunCameraStreamViewSample()
 //            return;
 //    }
 
+    // start subscriber
+//    pthread_t thread_id;
+//    int thread_result = pthread_create(&thread_id, NULL, subscriber_function, nullptr);
+//    if( thread_result != 0 )
+//    {
+//	    std::cout << "problem" << std::endl;
+//    }
+
     s_demoIndex = 0;
     //liveviewSample->StartFpvCameraStream(&DjiUser_ShowRgbImageCallback, &fpvName);
     //liveviewSample->StartFpvCameraStream(&joshua_image_callback, &fpvName);
-    //liveviewSample->joshua_start_camera_stream_fpv(&joshua_image_callback, &fpvName);
-    liveviewSample->joshua_start_camera_stream_main(&joshua_image_callback, &mainName);
+    liveviewSample->joshua_start_camera_stream_fpv(&joshua_image_callback, &fpvName);
+    //liveviewSample->joshua_start_camera_stream_main(&joshua_image_callback, &mainName);
     
     cout << "Please enter the 'q' or 'Q' to quit camera stream view\n"
          << endl;
@@ -258,6 +276,11 @@ static void joshua_image_callback(CameraRGBImage img, void *userData)
             putText(mat, text, Point(det->c[0]-textsize.width/2,
                                        det->c[1]+textsize.height/2),
                     fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
+
+//	    if( i == 0 )
+//	    {
+//		    cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
+//	    }
         }
         apriltag_detections_destroy(detections);	
 	// ***************************************************************************

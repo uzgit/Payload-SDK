@@ -47,6 +47,8 @@ T_DjiReturnCode DjiTest_FcSubscriptionRunSample(void);
 T_DjiReturnCode DjiTest_FcSubscriptionDataShowTrigger(void);
 T_DjiReturnCode DjiTest_FcSubscriptionGetTotalSatelliteNumber(uint8_t *number);
 
+bool get_data(void);
+
 #ifdef __cplusplus
 }
 #endif

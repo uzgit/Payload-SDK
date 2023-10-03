@@ -1,0 +1,1 @@
+../../../config/hal_usb_bulk.h

@@ -47,6 +47,11 @@ static bool s_userFcSubscriptionDataShow = false;
 static uint8_t s_totalSatelliteNumberUsed = 0;
 static uint32_t s_userFcSubscriptionDataCnt = 0;
 
+bool get_fcu_data(void)
+{
+	return true;
+}
+
 /* Exported functions definition ---------------------------------------------*/
 T_DjiReturnCode DjiTest_FcSubscriptionStartService(void)
 {
@@ -147,7 +152,14 @@ T_DjiReturnCode DjiTest_FcSubscriptionRunSample(void)
         return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
     }
 
-    USER_LOG_INFO("--> Step 3: Get latest value of the subscribed topics in the next 10 seconds\r\n");
+//    djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ,
+//                                               NULL);
+//    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//        USER_LOG_ERROR("Subscribe topic gimbal angles error.");
+//        return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
+//    }
+
+    USER_LOG_INFO("--> Step 3: Get latest value of the subscribed topics in the next few seconds\r\n");
 
     for (int i = 0; i < 10; ++i) {
         osalHandler->TaskSleepMs(1000 / FC_SUBSCRIPTION_TASK_FREQ);
