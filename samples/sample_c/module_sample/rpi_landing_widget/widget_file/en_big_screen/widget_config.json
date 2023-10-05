@@ -1,0 +1,48 @@
+{
+  "version": {
+    "major": 1,
+    "minor": 0
+  },
+  "main_interface": {
+    "floating_window": {
+      "is_enable": true
+    },
+    "speaker": {
+      "is_enable_tts": true,
+      "is_enable_voice": true
+    },
+    "widget_list": [
+      {
+        "widget_index": 0,
+        "widget_type": "switch",
+        "widget_name": "tracking_switch",
+        "icon_file_set": {
+          "icon_file_name_selected": "icon_switch_select.png",
+          "icon_file_name_unselected": "icon_switch_unselect.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": true,
+          "mapping_config_display_order": 2
+        }
+      }
+    ]
+  },
+  "config_interface": {
+    "text_input_box": {
+      "widget_name": "TextInputBox",
+      "placeholder_text": "Please input message",
+      "is_enable": true
+    },
+    "widget_list": [
+      {
+        "widget_index": 1,
+        "widget_type": "button",
+        "widget_name": "Button 4",
+        "customize_rc_buttons_config": {
+          "is_enable": true,
+          "mapping_config_display_order": 4
+        }
+      }
+    ]
+  }
+}

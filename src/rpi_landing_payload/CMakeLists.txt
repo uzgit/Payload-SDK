@@ -22,7 +22,7 @@ if (BUILD_TEST_CASES_ON MATCHES TRUE)
 endif ()
 
 include_directories(../../samples/sample_c++/module_sample/)
-include_directories(../../samples/sample_c/module_sample)
+include_directories(../../samples/sample_c/module_sample/)
 include_directories(../../samples/sample_c++/platform/linux/common/)
 include_directories(../../samples/sample_c++/platform/linux/manifold2/application)
 include_directories(../../../apriltag)
@@ -34,8 +34,12 @@ file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../samples/sample_c++/module_sample/module_sample/gimbal/*.c*
         ../../samples/sample_c++/module_sample/module_sample/flight_controller/*.c*
         ../../samples/sample_c++/module_sample/hms_manager/*.c*
-        ../../samples/sample_c/module_sample/*.c
+	#        ../../samples/sample_c/module_sample/*.c
         ../../samples/sample_c/module_sample/custom_fc_subscription/*.c
+        ../../samples/sample_c/module_sample/rpi_landing_widget/*.c
+        ../../samples/sample_c/module_sample/utils/*.c
+        ../../samples/sample_c/module_sample/hms/*.c
+        ../../samples/sample_c/module_sample/gimbal_manager/*.c
         )
 file(GLOB_RECURSE MODULE_COMMON_SRC ../../samples/sample_c++/platform/linux/common/*.c*)
 file(GLOB_RECURSE MODULE_HAL_SRC hal/*.c*)
