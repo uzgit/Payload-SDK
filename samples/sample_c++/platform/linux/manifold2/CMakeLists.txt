@@ -33,7 +33,19 @@ file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../../module_sample/gimbal/*.c*
         ../../../module_sample/flight_controller/*.c*
         ../../../module_sample/hms_manager/*.c*
-        ../../../../sample_c/module_sample/*.c
+	#        ../../../../sample_c/module_sample/*.c
+        ../../samples/sample_c/module_sample/camera_emu/*.c
+        ../../samples/sample_c/module_sample/camera_manager/*.c
+        ../../samples/sample_c/module_sample/fc_subscription/*.c
+        ../../samples/sample_c/module_sample/flight_control/*.c
+        ../../samples/sample_c/module_sample/gimbal_emu/*.c
+        ../../samples/sample_c/module_sample/gimbal_manager/*.c
+        ../../samples/sample_c/module_sample/hms/*.c
+        ../../samples/sample_c/module_sample/interest_point/*.c
+        ../../samples/sample_c/module_sample/liveview/*.c
+        ../../samples/sample_c/module_sample/mop_channel/*.c
+        ../../samples/sample_c/module_sample/utils/*.c
+        ../../samples/sample_c/module_sample/widget/*.c
         )
 file(GLOB_RECURSE MODULE_COMMON_SRC ../common/*.c*)
 file(GLOB_RECURSE MODULE_HAL_SRC hal/*.c*)
@@ -41,7 +53,10 @@ file(GLOB_RECURSE MODULE_APP_SRC application/*.c*)
 
 execute_process(COMMAND uname -m
         OUTPUT_VARIABLE DEVICE_SYSTEM_ID)
-if (DEVICE_SYSTEM_ID MATCHES x86_64)
+if (DEVICE_SYSTEM_ID MATCHES armv7l)
+    message("Raspberry Pi detected - setting LIBRARY_PATH")
+    set(TOOLCHAIN_NAME arm-linux-gnueabihf-gcc)
+elseif (DEVICE_SYSTEM_ID MATCHES x86_64)
     set(TOOLCHAIN_NAME x86_64-linux-gnu-gcc)
     add_definitions(-DPLATFORM_ARCH_x86_64=1)
 elseif (DEVICE_SYSTEM_ID MATCHES aarch64)

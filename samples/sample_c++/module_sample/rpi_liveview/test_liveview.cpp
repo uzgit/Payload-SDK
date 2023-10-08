@@ -81,10 +81,10 @@ T_DjiReturnCode LiveviewSample::start_camera_stream(CameraImageCallback callback
         deocder->second->init();
         deocder->second->registerCallback(callback, userData);
 
-//        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_FPV, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
-//                                           LiveviewConvertH264ToRgbCallback);
-        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_NO_1, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
+        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_FPV, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
                                            LiveviewConvertH264ToRgbCallback);
+//        return DjiLiveview_StartH264Stream(DJI_LIVEVIEW_CAMERA_POSITION_NO_1, DJI_LIVEVIEW_CAMERA_SOURCE_DEFAULT,
+//                                           LiveviewConvertH264ToRgbCallback);
     } else {
         return DJI_ERROR_SYSTEM_MODULE_CODE_NOT_FOUND;
     }

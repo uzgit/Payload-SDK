@@ -33,6 +33,7 @@ if (USE_SYSTEM_ARCH MATCHES LINUX)
     #add_subdirectory(samples/sample_c++/platform/linux/rpi_landing_payload)
     #add_subdirectory(samples/sample_c++/platform/linux/video_decoding_playground)
     add_subdirectory(src/rpi_landing_payload)
+    #add_subdirectory(src/edited.rpi_landing_payload)
     
     execute_process(COMMAND uname -m OUTPUT_VARIABLE DEVICE_SYSTEM_ID)
     if (DEVICE_SYSTEM_ID MATCHES armv7l)

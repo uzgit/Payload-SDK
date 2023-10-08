@@ -73,12 +73,14 @@
 
 using namespace std;
 using namespace cv;
+using namespace chrono;
 
 // global variables :(
 bool running = true; // can only be changed to false only in one single place
 pthread_t subscription_thread;
 T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
+T_DjiFcSubscriptionRC rc_status;
 T_DjiDataTimestamp timestamp = {0};
 mutex fcu_subscription_mutex;
 
@@ -90,9 +92,11 @@ apriltag_detection_t apriltag_detection;
 chrono::system_clock::time_point apriltag_detection_timestamp = chrono::system_clock::from_time_t(0);
 
 // widget variables
-pthread_t widget_poll_thread;
+//pthread_t widget_poll_thread;
 mutex widget_mutex;
 int aim_gimbal_index = 0;
+bool aim_gimbal = false;
+bool autonomous_control = true;
 #define WIDGET_DIR_PATH_LEN_MAX         (256)
 #define WIDGET_TASK_STACK_SIZE          (2048)
 static T_DjiReturnCode DjiTestWidget_SetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t value, void *userData);
@@ -111,7 +115,12 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
 static const uint32_t s_widgetHandlerListCount = sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem);
 static int32_t s_widgetValueList[sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem)] = {0};
 
+#define MAIN_CAMERA 0
+#if MAIN_CAMERA
 const char* camera_name = "MAIN_CAM";
+#else
+const char* camera_name = "FPV_CAM";
+#endif
 LiveviewSample* liveviewSample;// = new LiveviewSample();
 apriltag_family_t *tf = nullptr;
 apriltag_detector_t *td = nullptr;
@@ -124,7 +133,7 @@ void deinitialize();
 void sigint_handler();
 void* subscription_thread_function(void* args);
 void* gimbal_control_function(void* args);
-void* widget_poll_function(void* args);
+//void* widget_poll_function(void* args);
 static void apriltag_image_callback(CameraRGBImage img, void *userData);
 void initialize_widget();
 
@@ -148,6 +157,11 @@ void initialize()
 //    }
     initialize_widget();
 
+    if ( DjiTest_WidgetSpeakerStartService() )
+    {
+	USER_LOG_ERROR("widget speaker test init error");
+    }
+
     // initialize fcu subscription thread
     if( pthread_create( & subscription_thread, NULL, subscription_thread_function, NULL ) )
     {
@@ -155,15 +169,20 @@ void initialize()
 	return deinitialize();
     }
     
+
+    LiveviewSample* liveviewSample = new LiveviewSample();
+#if MAIN_CAM
+    liveviewSample->joshua_start_camera_stream_main(&apriltag_image_callback, &camera_name);
+
     // initialize gimbal control thread
     if( pthread_create( & gimbal_control_thread, NULL, gimbal_control_function, NULL ) )
     {
 	cout << "problem" << endl;
 	return deinitialize();
     }
-
-    LiveviewSample* liveviewSample = new LiveviewSample();
-    liveviewSample->joshua_start_camera_stream_main(&apriltag_image_callback, &camera_name);
+#else
+    liveviewSample->start_camera_stream(&apriltag_image_callback, &camera_name);
+#endif
 }
 
 void deinitialize()
@@ -173,8 +192,12 @@ void deinitialize()
 //    pthread_join( widget_poll_thread, NULL );
     cout << "joining FCU data retrieval thread" << endl;
     pthread_join( subscription_thread, NULL );
+#if MAIN_CAM
     cout << "joining gimbal control thread" << endl;
     pthread_join( gimbal_control_thread, NULL );
+#else
+    cout << "using FPV cam: no gimbal thread to join" << endl;
+#endif
     cout << "all threads joined" << endl;
 
     // liveviewSample->stop_camera_stream
@@ -186,8 +209,8 @@ void deinitialize()
 // *******************************************************************************************************************************
 static T_DjiTaskHandle s_widgetTestThread;
 static bool s_isWidgetFileDirPathConfigured = false;
-//static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = {0};
-static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = "/home/joshua/git/Payload-SDK/samples/sample_c/module_sample/rpi_landing_widget/";
+static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = {0};
+//static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = "/home/joshua/git/Payload-SDK/samples/sample_c/module_sample/rpi_landing_widget/";
 
 
 static const char *s_widgetTypeNameArray[] = {
@@ -250,6 +273,8 @@ static void *DjiTest_WidgetTask(void *arg)
 
     USER_UTIL_UNUSED(arg);
 
+    osalHandler->TaskSleepMs(2000);
+
     while( running )
     {
         djiStat = osalHandler->GetTimeMs(&sysTimeMs);
@@ -260,7 +285,7 @@ static void *DjiTest_WidgetTask(void *arg)
 
 #ifndef USER_FIRMWARE_MAJOR_VERSION
         snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
-			"System time : %.1f s\nCPU temp C  : %.1f \n", sysTimeMs/1000.0, cpu_temperature());
+			"System time (s) : %.1f\nCPU temp (C)  : %.1f \nApril Tag px: (%.1f, %.1f)\n", sysTimeMs/1000.0, cpu_temperature(), apriltag_detection.c[0], apriltag_detection.c[1]);
 //        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN, "CPU temp C  : %f ms\n", cpu_temperature());
 #else
         snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
@@ -277,7 +302,7 @@ static void *DjiTest_WidgetTask(void *arg)
             USER_LOG_ERROR("Floating window show message error, stat = 0x%08llX", djiStat);
         }
 
-        osalHandler->TaskSleepMs(1000);
+        osalHandler->TaskSleepMs(50);
     }
 }
 
@@ -288,88 +313,85 @@ void initialize_widget()
     T_DjiReturnCode djiStat;
     T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
 
+    cout << "starting step 1" << endl;
     //Step 1 : Init DJI Widget
     djiStat = DjiWidget_Init();
     if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("Dji test widget init error, stat = 0x%08llX", djiStat);
     }
 
-//#ifdef SYSTEM_ARCH_LINUX
-    //Step 2 : Set UI Config (Linux environment)
-    char curFileDirPath[WIDGET_DIR_PATH_LEN_MAX];
-    char tempPath[WIDGET_DIR_PATH_LEN_MAX];
-    djiStat = DjiUserUtil_GetCurrentFileDirPath(__FILE__, WIDGET_DIR_PATH_LEN_MAX, curFileDirPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", djiStat);
-    }
-
-    if (s_isWidgetFileDirPathConfigured == true) {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", s_widgetFileDirPath);
-    } else {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", curFileDirPath);
-    }
-
-    //set default ui config path
-    djiStat = DjiWidget_RegDefaultUiConfigByDirPath(tempPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Add default widget ui config error, stat = 0x%08llX", djiStat);
-    }
-
-    //set ui config for English language
-    djiStat = DjiWidget_RegUiConfigByDirPath(DJI_MOBILE_APP_LANGUAGE_ENGLISH,
-                                             DJI_MOBILE_APP_SCREEN_TYPE_BIG_SCREEN,
-                                             tempPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Add widget ui config error, stat = 0x%08llX", djiStat);
-    }
-
-    //set ui config for Chinese language
-    if (s_isWidgetFileDirPathConfigured == true) {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", s_widgetFileDirPath);
-    } else {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", curFileDirPath);
-    }
-//#else
-//    //Step 2 : Set UI Config (RTOS environment)
-//    T_DjiWidgetBinaryArrayConfig enWidgetBinaryArrayConfig = {
-//        .binaryArrayCount = g_EnBinaryArrayCount,
-//        .fileBinaryArrayList = g_EnFileBinaryArrayList
-//    };
+//    cout << "starting step 2" << endl;
+//    //Step 2 : Set UI Config (Linux environment)
+//    char curFileDirPath[WIDGET_DIR_PATH_LEN_MAX];
+//    char tempPath[WIDGET_DIR_PATH_LEN_MAX];
+//    djiStat = DjiUserUtil_GetCurrentFileDirPath(__FILE__, WIDGET_DIR_PATH_LEN_MAX, curFileDirPath);
+//    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//        USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", djiStat);
+//    }
 //
-//    //set default ui config
-//    djiStat = DjiWidget_RegDefaultUiConfigByBinaryArray(&enWidgetBinaryArrayConfig);
+//    cout << "starting step 3" << endl;
+//    if (s_isWidgetFileDirPathConfigured == true) {
+//        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", s_widgetFileDirPath);
+//    } else {
+//        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", curFileDirPath);
+//    }
+//
+//    cout << "starting step 4" << endl;
+//    //set default ui config path
+//    djiStat = DjiWidget_RegDefaultUiConfigByDirPath(tempPath);
 //    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
 //        USER_LOG_ERROR("Add default widget ui config error, stat = 0x%08llX", djiStat);
 //    }
-//#endif
-    //Step 3 : Set widget handler list
-    djiStat = DjiWidget_RegHandlerList(s_widgetHandlerList, s_widgetHandlerListCount);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Set widget handler list error, stat = 0x%08llX", djiStat);
-    }
+//
+//    cout << "starting step 5" << endl;
+//    //set ui config for English language
+//    djiStat = DjiWidget_RegUiConfigByDirPath(DJI_MOBILE_APP_LANGUAGE_ENGLISH,
+//                                             DJI_MOBILE_APP_SCREEN_TYPE_BIG_SCREEN,
+//                                             tempPath);
+//    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//        USER_LOG_ERROR("Add widget ui config error, stat = 0x%08llX", djiStat);
+//    }
 
-    //Step 4 : Run widget api sample task
-    if (osalHandler->TaskCreate("user_widget_task", DjiTest_WidgetTask, WIDGET_TASK_STACK_SIZE, NULL,
-                                &s_widgetTestThread) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Dji widget test task create error.");
-    }
+//    cout << "starting step 6" << endl;
+//    //set ui config for Chinese language
+//    if (s_isWidgetFileDirPathConfigured == true) {
+//        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", s_widgetFileDirPath);
+//    } else {
+//        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", curFileDirPath);
+//    }
+
+//    cout << "starting step 7" << endl;
+//    //Step 3 : Set widget handler list
+//    djiStat = DjiWidget_RegHandlerList(s_widgetHandlerList, s_widgetHandlerListCount);
+//    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//        USER_LOG_ERROR("Set widget handler list error, stat = 0x%08llX", djiStat);
+//    }
+
+//    cout << "starting step 6" << endl;
+//    //Step 4 : Run widget api sample task
+//    if (osalHandler->TaskCreate("user_widget_task", DjiTest_WidgetTask, WIDGET_TASK_STACK_SIZE, NULL,
+//                                &s_widgetTestThread) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//        USER_LOG_ERROR("Dji widget test task create error.");
+//    }
+    
+    cout << "end of widget creation" << endl;
 }
 // *******************************************************************************************************************************
 
-void* widget_poll_function(void* args)
-{
-	cout << "beginning widget poll thread" << endl;
-	while( running )
-	{
-		widget_mutex.lock();
-//		DjiTestWidget_GetWidgetValue( DJI_WIDGET_TYPE_SWITCH, 0, & aim_gimbal, NULL );
-		widget_mutex.unlock();
-		
-		std::chrono::milliseconds sleep_duration(200);
-		std::this_thread::sleep_for(sleep_duration);
-	}
-	cout << "ending widget poll thread" << endl;
-}
+//void* widget_poll_function(void* args)
+//{
+//	cout << "beginning widget poll thread" << endl;
+//	while( running )
+//	{
+//		widget_mutex.lock();
+////		DjiTestWidget_GetWidgetValue( DJI_WIDGET_TYPE_SWITCH, 0, & aim_gimbal, NULL );
+//		widget_mutex.unlock();
+//		
+//		std::chrono::milliseconds sleep_duration(200);
+//		std::this_thread::sleep_for(sleep_duration);
+//	}
+//	cout << "ending widget poll thread" << endl;
+//}
 
 void* subscription_thread_function(void* args)
 {
@@ -386,18 +408,42 @@ void* subscription_thread_function(void* args)
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
 		USER_LOG_ERROR("Error subscribing to the gimbal angles topic!");
 	}
+	
+	// subscribe to gimbal angles topic
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+		USER_LOG_ERROR("Error subscribing to the gimbal angles topic!");
+	}
 
 	while(running)
 	{
+		// ***********************************************************************************************
 		fcu_subscription_mutex.lock();
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES,
 								  (uint8_t *) &gimbal_angles,
 								  sizeof(T_DjiFcSubscriptionGimbalAngles),
 								  &timestamp);
-		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
 		    USER_LOG_ERROR("Error getting the gimbal angles!");
 		}
+
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC,
+								  (uint8_t *) &rc_status,
+								  sizeof(T_DjiFcSubscriptionRC),
+								  &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+		    USER_LOG_ERROR("Error getting the rc topic!");
+		}
 		fcu_subscription_mutex.unlock();
+		// ***********************************************************************************************
+
+		if( autonomous_control && (abs(rc_status.pitch) > 1000 || abs(rc_status.roll) > 1000 || abs(rc_status.yaw) > 1000 || abs(rc_status.throttle) > 1000) )
+		{
+			autonomous_control = false;
+			cout << "Disabling autonomous control because of manual stick input!" << endl;
+		}
 
 		std::chrono::milliseconds sleep_duration(20);
 		std::this_thread::sleep_for(sleep_duration);
@@ -405,6 +451,11 @@ void* subscription_thread_function(void* args)
 
 	cout << "unsubscribing from fcu topics" << endl;
 	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+		USER_LOG_ERROR("Error unsubscribing from the gimbal angles topic!");
+	}
+	
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
 		USER_LOG_ERROR("Error unsubscribing from the gimbal angles topic!");
 	}
@@ -493,7 +544,7 @@ void* gimbal_control_function(void* args)
 //     dji_f64_t time; /*!< Expect execution time of gimbal rotation, unit: second. */
 // } T_DjiGimbalManagerRotation;
 
-    bool aim_gimbal = s_widgetValueList[aim_gimbal_index];
+    aim_gimbal = s_widgetValueList[aim_gimbal_index];
     bool old_aim_gimbal = aim_gimbal;
     while( running )
     {
@@ -663,6 +714,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 			apriltag_detection_timestamp = std::chrono::system_clock::now();
 			apriltag_detection_mutex.unlock();
 		}
+//		cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
 	}
 
 #if VISUALIZE
@@ -695,10 +747,6 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
                                        det->c[1]+textsize.height/2),
                     fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
 
-//	    if( i == 0 )
-//	    {
-//		    cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
-//	    }
         }
 #endif
         apriltag_detections_destroy(detections);	

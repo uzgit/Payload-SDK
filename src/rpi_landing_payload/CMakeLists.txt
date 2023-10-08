@@ -36,7 +36,8 @@ file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../samples/sample_c++/module_sample/hms_manager/*.c*
 	#        ../../samples/sample_c/module_sample/*.c
         ../../samples/sample_c/module_sample/custom_fc_subscription/*.c
-        ../../samples/sample_c/module_sample/rpi_landing_widget/*.c
+	../../samples/sample_c/module_sample/rpi_landing_widget/*.c
+	#../../samples/sample_c/module_sample/widget/*.c
         ../../samples/sample_c/module_sample/utils/*.c
         ../../samples/sample_c/module_sample/hms/*.c
         ../../samples/sample_c/module_sample/gimbal_manager/*.c
