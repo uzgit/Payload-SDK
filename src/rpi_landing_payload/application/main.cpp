@@ -70,7 +70,13 @@
 #include <flight_controller/test_flight_controller_entry.h>
 #include <positioning/test_positioning.h>
 #include <hms_manager/hms_manager_entry.h>
+
 #include "camera_manager/test_camera_manager_entry.h"
+#include <utils/util_misc.h>
+#include "camera_manager/test_camera_manager.h"
+#include "dji_camera_manager.h"
+#include "dji_platform.h"
+#include "dji_logger.h"
 
 using namespace std;
 using namespace cv;
@@ -93,6 +99,32 @@ double u_n, v_n;
 apriltag_detection_t apriltag_detection;
 chrono::system_clock::time_point apriltag_detection_timestamp = chrono::system_clock::from_time_t(0);
 
+pthread_t camera_management_thread;
+typedef struct {
+    E_DjiCameraType cameraType;
+    char *cameraTypeStr;
+} T_DjiTestCameraTypeStr;
+static const T_DjiTestCameraTypeStr s_cameraTypeStrList[] = {
+    {DJI_CAMERA_TYPE_UNKNOWN, "Unknown"},
+    {DJI_CAMERA_TYPE_Z30,     "Zenmuse Z30"},
+    {DJI_CAMERA_TYPE_XT2,     "Zenmuse XT2"},
+    {DJI_CAMERA_TYPE_PSDK,    "Payload Camera"},
+    {DJI_CAMERA_TYPE_XTS,     "Zenmuse XTS"},
+    {DJI_CAMERA_TYPE_H20,     "Zenmuse H20"},
+    {DJI_CAMERA_TYPE_H20T,    "Zenmuse H20T"},
+    {DJI_CAMERA_TYPE_P1,      "Zenmuse P1"},
+    {DJI_CAMERA_TYPE_L1,      "Zenmuse L1"},
+    {DJI_CAMERA_TYPE_H20N,    "Zenmuse H20N"},
+    {DJI_CAMERA_TYPE_M30,     "M30 Camera"},
+    {DJI_CAMERA_TYPE_M30T,    "M30T Camera"},
+    {DJI_CAMERA_TYPE_M3E,     "M3E Camera"},
+    {DJI_CAMERA_TYPE_M3T,     "M3T Camera"},
+};
+E_DjiCameraManagerStreamSource current_stream_source = DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM;
+E_DjiCameraManagerStreamSource intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
+mutex current_stream_source_mutex;
+mutex intended_stream_source_mutex;
+
 // widget variables
 //pthread_t widget_poll_thread;
 mutex widget_mutex;
@@ -111,6 +143,8 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
 //    {1, DJI_WIDGET_TYPE_LIST,          DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
     {0, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
     {1, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+    {2, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+    {3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {3, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {4, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {5, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
@@ -138,6 +172,7 @@ void deinitialize();
 void sigint_handler();
 void* subscription_thread_function(void* args);
 void* gimbal_control_function(void* args);
+void* camera_management_function(void* args);
 //void* widget_poll_function(void* args);
 static void apriltag_image_callback(CameraRGBImage img, void *userData);
 void initialize_widget();
@@ -185,6 +220,13 @@ void initialize()
 	cout << "problem" << endl;
 	return deinitialize();
     }
+    
+    // initialize gimbal control thread
+    if( pthread_create( & camera_management_thread, NULL, camera_management_function, NULL ) )
+    {
+	cout << "problem" << endl;
+	return deinitialize();
+    }
 #else
     liveviewSample->start_camera_stream(&apriltag_image_callback, &camera_name);
 #endif
@@ -200,6 +242,8 @@ void deinitialize()
 #if MAIN_CAMERA
     cout << "joining gimbal control thread" << endl;
     pthread_join( gimbal_control_thread, NULL );
+    cout << "joining camera management thread" << endl;
+    pthread_join( camera_management_thread, NULL );
 #else
     cout << "using FPV cam: no gimbal thread to join" << endl;
 #endif
@@ -569,6 +613,121 @@ void* gimbal_control_function(void* args)
         USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
     }
     cout << "exiting gimbal control thread" << endl;
+}
+
+static uint8_t DjiTest_CameraManagerGetCameraTypeIndex(E_DjiCameraType cameraType)
+{
+    uint8_t i;
+
+    for (i = 0; i < sizeof(s_cameraTypeStrList) / sizeof(s_cameraTypeStrList[0]); i++) {
+        if (s_cameraTypeStrList[i].cameraType == cameraType) {
+            return i;
+        }
+    }
+
+    return 0;
+}
+
+void* camera_management_function(void* args)
+{
+	cout << "entering camera management thread" << endl;
+
+    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+    T_DjiReturnCode returnCode;
+    E_DjiCameraType cameraType;
+    T_DjiCameraManagerFirmwareVersion firmwareVersion;
+    T_DjiCameraManagerFocusPosData focusPosData;
+    T_DjiCameraManagerTapZoomPosData tapZoomPosData;
+
+    E_DjiMountPosition mountPosition = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
+
+    USER_LOG_INFO("--> Step 1: Init camera manager module");
+    returnCode = DjiCameraManager_Init();
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        USER_LOG_ERROR("Init camera manager failed, error code: 0x%08X\r\n", returnCode);
+	return nullptr;
+    }
+
+    USER_LOG_INFO("--> Step 2: Get camera type and version");
+    returnCode = DjiCameraManager_GetCameraType(mountPosition, &cameraType);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        USER_LOG_ERROR("Get mounted position %d camera's type failed, error code: 0x%08X\r\n",
+                       mountPosition, returnCode);
+	return nullptr;
+    }
+    USER_LOG_INFO("Mounted position %d camera's type is %s",
+                  mountPosition,
+                  s_cameraTypeStrList[DjiTest_CameraManagerGetCameraTypeIndex(cameraType)].cameraTypeStr);
+
+    returnCode = DjiCameraManager_GetFirmwareVersion(mountPosition, &firmwareVersion);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+        USER_LOG_ERROR("Get mounted position %d camera's firmware version failed, error code: 0x%08X\r\n",
+                       mountPosition, returnCode);
+	return nullptr;
+    }
+    USER_LOG_INFO("Mounted position %d camera's firmware is V%02d.%02d.%02d.%02d\r\n", mountPosition,
+                  firmwareVersion.firmware_version[0], firmwareVersion.firmware_version[1],
+                  firmwareVersion.firmware_version[2], firmwareVersion.firmware_version[3]);
+
+//typedef enum {
+//    DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM = 0x0,
+//    DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM = 0x1,
+//    DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM = 0x2,
+//    DJI_CAMERA_MANAGER_SOURCE_IR_CAM = 0x3,
+//    DJI_CAMERA_MANAGER_SOURCE_VISIBLE_CAM = 0x7,
+//} E_DjiCameraManagerStreamSource;
+	
+	
+	std::chrono::milliseconds sleep_duration(200);
+	while( running )
+	{
+//		if( intended_stream_source != current_stream_source )
+//		{
+			intended_stream_source_mutex.lock();
+			cout << "Switching stream sources from " << current_stream_source << " to " << intended_stream_source << "..." << endl;
+			returnCode = DjiCameraManager_SetStreamSource(mountPosition, intended_stream_source);
+			cout << "returnCode: " << returnCode << endl;
+			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+			{
+				cout << "failed setting the stream source..." << endl;
+		    	}
+			else
+			{
+				current_stream_source_mutex.lock();
+				current_stream_source = intended_stream_source;
+				current_stream_source_mutex.unlock();
+			}
+			intended_stream_source_mutex.unlock();
+//		}
+
+		cout << "lalala" << endl;
+//            USER_LOG_INFO("Step 1: Change camera stream source to zoom camera.");
+//            returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM);
+//            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//                if (returnCode == DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+//                    USER_LOG_WARN("For camera type %d, it does not need to change stream source.\r\n", cameraType);
+//                }
+//            }
+//		std::this_thread::sleep_for(sleep_duration);
+//                
+//	    USER_LOG_INFO("Set camera stream source to infrared camera.");
+//                returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_IR_CAM);
+//                if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//                    USER_LOG_ERROR("Change camera stream source to infrared camera failed at position %d, error code: 0x%08X\r\n",
+//                                mountPosition, returnCode);
+//                }
+//		std::this_thread::sleep_for(sleep_duration);
+//	    
+//	    USER_LOG_INFO("Set camera stream source to wide camera.");
+//                returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM);
+//                if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+//                    USER_LOG_ERROR("Change camera stream source to wide camera failed at position %d, error code: 0x%08X\r\n",
+//                                mountPosition, returnCode);
+//                }
+		std::this_thread::sleep_for(sleep_duration);
+	}
+	
+	cout << "exiting camera management thread" << endl;
 }
 
 /* Exported functions definition ---------------------------------------------*/
