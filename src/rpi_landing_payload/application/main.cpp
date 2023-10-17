@@ -664,6 +664,9 @@ void* camera_management_function(void* args)
     T_DjiCameraManagerTapZoomPosData tapZoomPosData;
 
     E_DjiMountPosition mountPosition = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
+		
+    std::chrono::milliseconds initial_sleep_duration(500);
+    std::this_thread::sleep_for(initial_sleep_duration);
 
     USER_LOG_INFO("--> Step 1: Init camera manager module");
     returnCode = DjiCameraManager_Init();
@@ -672,6 +675,8 @@ void* camera_management_function(void* args)
 	return nullptr;
     }
 
+    std::this_thread::sleep_for(initial_sleep_duration);
+    
     USER_LOG_INFO("--> Step 2: Get camera type and version");
     returnCode = DjiCameraManager_GetCameraType(mountPosition, &cameraType);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
@@ -700,6 +705,14 @@ void* camera_management_function(void* args)
         returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
         USER_LOG_INFO("Set mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
                       mountPosition, default_zoom_factor, returnCode);
+    }
+
+    returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+	USER_LOG_ERROR("Set mounted position %d camera's focus mode(%d) failed,"
+		       " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
+		       returnCode);
     }
 
 
@@ -750,32 +763,76 @@ void* camera_management_function(void* args)
 //    DJI_CAMERA_ZOOM_DIRECTION_OUT = 0, /*!< The lens moves in the far direction, the zoom factor becomes smaller. */
 //    DJI_CAMERA_ZOOM_DIRECTION_IN = 1, /*!< The lens moves in the near direction, the zoom factor becomes larger. */
 //} E_DjiCameraZoomDirection;
-
-		if( apriltag_detection_area != 0 && apriltag_detection_area < 0.05 )
+		auto now = std::chrono::high_resolution_clock::now();
+		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
+		if( aim_gimbal && duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
 		{
-			//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
-			// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
-			returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_NORMAL);
-			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+
+//		    T_DjiCameraManagerFocusPosData focus_point;
+//		    focus_point.focusX = apriltag_detection.c[0];
+//		    focus_point.focusY = apriltag_detection.c[1];
+//		    USER_LOG_INFO("Set mounted position %d camera's focus point to (%0.1f, %0.1f).",
+//				  mountPosition, apriltag_detection.c[0], apriltag_detection.c[1]);
+//		    returnCode = DjiCameraManager_SetFocusTarget(mountPosition, focus_point);
+//		    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+//			returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+//			USER_LOG_ERROR("Set mounted position %d camera's focus point(%0.1f, %0.1f) failed,"
+//				       " error code :0x%08X.", mountPosition, focus_point.focusX, focus_point.focusY,
+//				       returnCode);
+//		    }
+
+			if( apriltag_detection_area != 0 && apriltag_detection_area < 0.05 )
 			{
-				USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-					       " error code :0x%08X.", mountPosition, returnCode);
+				//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
+				// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
+				returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_NORMAL);
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+				{
+					USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+						       " error code :0x%08X.", mountPosition, returnCode);
+				}
+			}
+			else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.7 )
+			{
+				//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
+				// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
+				returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_NORMAL);
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+				{
+					USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+						       " error code :0x%08X.", mountPosition, returnCode);
+				}
+			}
+			else
+			{
+			    returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+			    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+				returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+					       " error code :0x%08X", mountPosition, returnCode);
+			    }
 			}
 		}
-		else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.1 )
+		else
 		{
-			//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
-			// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
-			returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_NORMAL);
-			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
-			{
-				USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-					       " error code :0x%08X.", mountPosition, returnCode);
-			}
+			    returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+			    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+				returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+					       " error code :0x%08X", mountPosition, returnCode);
+			    }
 		}
-
+		USER_LOG_INFO("Current zoom factor(%0.1f)", opticalZoomParam.currentOpticalZoomFactor);
 		std::this_thread::sleep_for(sleep_duration);
 	}
+    
+    returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+	USER_LOG_ERROR("Set mounted position %d camera's focus mode(%d) failed,"
+		       " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
+		       returnCode);
+    }
 
     USER_LOG_INFO("Set mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
     returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
@@ -916,9 +973,10 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	double x4 = apriltag_detection.p[3][0];
 	double y4 = apriltag_detection.p[3][1];
 
-	double a1 = x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2);
-	double a2 = x1*(y3-y4) + x3*(y4-y1) + x4*(y1-y3);
-	apriltag_detection_area = 0.5 * abs(a1) + 0.5 * abs(a2);
+//	double a1 = x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2);
+//	double a2 = x1*(y3-y4) + x3*(y4-y1) + x4*(y1-y3);
+//	apriltag_detection_area = 0.5 * abs(a1) + 0.5 * abs(a2);
+	apriltag_detection_area = 0.5 * abs( (x1*y2 + x2*y3 + x3*y4 + x4*y1) - (x2*y1 + x3*y2 + x4*y3 + x1*y4) );
 	apriltag_detection_area /= (img.width * img.height);
 
 	cout << ") id: " << apriltag_detection.id << ", area: " << apriltag_detection_area << endl;
