@@ -97,6 +97,7 @@ E_DjiGimbalMode gimbal_mode = DJI_GIMBAL_MODE_FREE;
 mutex apriltag_detection_mutex;
 double u_n, v_n;
 apriltag_detection_t apriltag_detection;
+double apriltag_detection_area;
 chrono::system_clock::time_point apriltag_detection_timestamp = chrono::system_clock::from_time_t(0);
 
 pthread_t camera_management_thread;
@@ -121,9 +122,10 @@ static const T_DjiTestCameraTypeStr s_cameraTypeStrList[] = {
     {DJI_CAMERA_TYPE_M3T,     "M3T Camera"},
 };
 E_DjiCameraManagerStreamSource current_stream_source = DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM;
-E_DjiCameraManagerStreamSource intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
+E_DjiCameraManagerStreamSource intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
 mutex current_stream_source_mutex;
 mutex intended_stream_source_mutex;
+T_DjiCameraManagerOpticalZoomParam opticalZoomParam;
 
 // widget variables
 //pthread_t widget_poll_thread;
@@ -587,11 +589,33 @@ void* gimbal_control_function(void* args)
 		u_n = (u - global_image_half_width)  / global_image_half_width;
 		v_n = (v - global_image_half_height) / global_image_half_height;
 
+		double current_speed_factor_pitch = speed_factor_pitch;
+		double current_speed_factor_yaw = speed_factor_yaw;
+
+		if( current_stream_source == intended_stream_source )
+		{
+			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			{
+				current_speed_factor_pitch /= (opticalZoomParam.currentOpticalZoomFactor);
+				current_speed_factor_yaw   /= (opticalZoomParam.currentOpticalZoomFactor);
+			}
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+			{
+				current_speed_factor_pitch /=  2;
+				current_speed_factor_yaw   /=  2;
+			}
+		}
+		else
+		{
+			current_speed_factor_pitch = 0;
+			current_speed_factor_yaw   = 0;
+		}
+
 		T_DjiGimbalManagerRotation rotation;
 		rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
-		rotation.pitch =  - speed_factor_pitch * v_n;
+		rotation.pitch =  - current_speed_factor_pitch * v_n;
 		rotation.roll  =  0.0;
-		rotation.yaw   =    speed_factor_yaw * u_n;
+		rotation.yaw   =    current_speed_factor_yaw * u_n;
 		rotation.time  = 2.0;
 	      
 		returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
@@ -669,6 +693,16 @@ void* camera_management_function(void* args)
                   firmwareVersion.firmware_version[0], firmwareVersion.firmware_version[1],
                   firmwareVersion.firmware_version[2], firmwareVersion.firmware_version[3]);
 
+    dji_f32_t default_zoom_factor = 2;
+    USER_LOG_INFO("Set mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
+    returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+        USER_LOG_INFO("Set mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
+                      mountPosition, default_zoom_factor, returnCode);
+    }
+
+
 //typedef enum {
 //    DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM = 0x0,
 //    DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM = 0x1,
@@ -677,56 +711,80 @@ void* camera_management_function(void* args)
 //    DJI_CAMERA_MANAGER_SOURCE_VISIBLE_CAM = 0x7,
 //} E_DjiCameraManagerStreamSource;
 	
-	
 	std::chrono::milliseconds sleep_duration(200);
 	while( running )
 	{
-//		if( intended_stream_source != current_stream_source )
-//		{
-			intended_stream_source_mutex.lock();
-			cout << "Switching stream sources from " << current_stream_source << " to " << intended_stream_source << "..." << endl;
-			returnCode = DjiCameraManager_SetStreamSource(mountPosition, intended_stream_source);
-			cout << "returnCode: " << returnCode << endl;
-			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-			{
-				cout << "failed setting the stream source..." << endl;
-		    	}
-			else
-			{
-				current_stream_source_mutex.lock();
-				current_stream_source = intended_stream_source;
-				current_stream_source_mutex.unlock();
-			}
-			intended_stream_source_mutex.unlock();
-//		}
+		intended_stream_source_mutex.lock();
+		// cout << "Switching stream sources from " << current_stream_source << " to " << intended_stream_source << "..." << endl;
+		returnCode = DjiCameraManager_SetStreamSource(mountPosition, intended_stream_source);
+		// cout << "returnCode: " << returnCode << endl;
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			cout << "failed setting the stream source..." << endl;
+		}
+		else
+		{
+			current_stream_source_mutex.lock();
+			current_stream_source = intended_stream_source;
+			current_stream_source_mutex.unlock();
+		}
+		intended_stream_source_mutex.unlock();
 
-		cout << "lalala" << endl;
-//            USER_LOG_INFO("Step 1: Change camera stream source to zoom camera.");
-//            returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM);
-//            if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//                if (returnCode == DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-//                    USER_LOG_WARN("For camera type %d, it does not need to change stream source.\r\n", cameraType);
-//                }
-//            }
-//		std::this_thread::sleep_for(sleep_duration);
-//                
-//	    USER_LOG_INFO("Set camera stream source to infrared camera.");
-//                returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_IR_CAM);
-//                if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//                    USER_LOG_ERROR("Change camera stream source to infrared camera failed at position %d, error code: 0x%08X\r\n",
-//                                mountPosition, returnCode);
-//                }
-//		std::this_thread::sleep_for(sleep_duration);
-//	    
-//	    USER_LOG_INFO("Set camera stream source to wide camera.");
-//                returnCode = DjiCameraManager_SetStreamSource(mountPosition, DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM);
-//                if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-//                    USER_LOG_ERROR("Change camera stream source to wide camera failed at position %d, error code: 0x%08X\r\n",
-//                                mountPosition, returnCode);
-//                }
+		returnCode = DjiCameraManager_GetOpticalZoomParam(mountPosition, &opticalZoomParam);
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+		{
+			USER_LOG_ERROR("Get mounted position %d camera's zoom param failed, error code :0x%08X", mountPosition, returnCode);
+		}
+
+//typedef enum {
+//    DJI_CAMERA_ZOOM_SPEED_SLOWEST = 72, /*!< Lens zooms in slowest speed. */
+//    DJI_CAMERA_ZOOM_SPEED_SLOW = 73, /*!< Lens zooms in slow speed. */
+//    DJI_CAMERA_ZOOM_SPEED_MODERATELY_SLOW = 74, /*!< Lens zooms in speed slightly slower than normal speed. */
+//    DJI_CAMERA_ZOOM_SPEED_NORMAL = 75, /*!< Lens zooms in normal speed. */
+//    DJI_CAMERA_ZOOM_SPEED_MODERATELY_FAST = 76, /*!< Lens zooms very in speed slightly faster than normal speed. */
+//    DJI_CAMERA_ZOOM_SPEED_FAST = 77, /*!< Lens zooms very in fast speed. */
+//    DJI_CAMERA_ZOOM_SPEED_FASTEST = 78, /*!< Lens zooms very in fastest speed. */
+//} E_DjiCameraZoomSpeed;
+
+//typedef enum {
+//    DJI_CAMERA_ZOOM_DIRECTION_OUT = 0, /*!< The lens moves in the far direction, the zoom factor becomes smaller. */
+//    DJI_CAMERA_ZOOM_DIRECTION_IN = 1, /*!< The lens moves in the near direction, the zoom factor becomes larger. */
+//} E_DjiCameraZoomDirection;
+
+		if( apriltag_detection_area != 0 && apriltag_detection_area < 0.05 )
+		{
+			//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
+			// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
+			returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_NORMAL);
+			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+			{
+				USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+					       " error code :0x%08X.", mountPosition, returnCode);
+			}
+		}
+		else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.1 )
+		{
+			//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
+			// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
+			returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_NORMAL);
+			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+			{
+				USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+					       " error code :0x%08X.", mountPosition, returnCode);
+			}
+		}
+
 		std::this_thread::sleep_for(sleep_duration);
 	}
-	
+
+    USER_LOG_INFO("Set mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
+    returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
+    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+        USER_LOG_INFO("Set mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
+                      mountPosition, default_zoom_factor, returnCode);
+    }
+
 	cout << "exiting camera management thread" << endl;
 }
 
@@ -770,12 +828,13 @@ int main(int argc, char **argv)
 
 static void apriltag_image_callback(CameraRGBImage img, void *userData)
 {
+	apriltag_detection_area =0 ;
 //    auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 //    cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
 
-    string name = string(reinterpret_cast<char *>(userData));
+	string name = string(reinterpret_cast<char *>(userData));
 
-    Mat mat(img.height, img.width, CV_8UC3, img.rawData.data(), img.width * 3);
+	Mat mat(img.height, img.width, CV_8UC3, img.rawData.data(), img.width * 3);
 
         cvtColor(mat, mat, COLOR_RGB2BGR);
 
@@ -801,15 +860,24 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 
 	cv::Mat gray;
 	cvtColor(mat, gray, COLOR_BGR2GRAY);
+	
+	// we have to handle IR images differently
+	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+	{
+		cv::bitwise_not(gray, gray);
+	}
+	
 	image_u8_t im = { .width = gray.cols,
             .height = gray.rows,
             .stride = gray.cols,
             .buf = gray.data
         };
+
 	zarray_t *detections = apriltag_detector_detect(td, &im);
 
 //	cout << "tags detected: " << zarray_size(detections) << endl;
 
+	cout << "tags: ( ";
 	// get the minimum ID in the detections:
 	int maximum_id = -1;
         for (int i = 0; i < zarray_size(detections); i++)
@@ -823,9 +891,37 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 			apriltag_detection = *det;
 			apriltag_detection_timestamp = std::chrono::system_clock::now();
 			apriltag_detection_mutex.unlock();
+
+			
+
+//			// get area of april tag quadrilateral
+//			for (i = 0; i < 4; i++)
+//			{
+//			    int j = (i + 1) % 4; // Calculate the next index (wraps around to 0 for the last point)
+//			    apriltag_detection_area += det->p[i][0] * det->p[j][1] - det->p[j][0] * det->p[i][1];
+//			}
+//			apriltag_detection_area = 0.5 * fabs(apriltag_detection_area);
+//			apriltag_detection_area /= (img.width * img.height);
 		}
 //		cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
+		cout << det->id << " ";
 	}
+	
+	double x1 = apriltag_detection.p[0][0];
+	double y1 = apriltag_detection.p[0][1];
+	double x2 = apriltag_detection.p[1][0];
+	double y2 = apriltag_detection.p[1][1];
+	double x3 = apriltag_detection.p[2][0];
+	double y3 = apriltag_detection.p[2][1];
+	double x4 = apriltag_detection.p[3][0];
+	double y4 = apriltag_detection.p[3][1];
+
+	double a1 = x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2);
+	double a2 = x1*(y3-y4) + x3*(y4-y1) + x4*(y1-y3);
+	apriltag_detection_area = 0.5 * abs(a1) + 0.5 * abs(a2);
+	apriltag_detection_area /= (img.width * img.height);
+
+	cout << ") id: " << apriltag_detection.id << ", area: " << apriltag_detection_area << endl;
 
 #if VISUALIZE
         // Draw detection outlines
