@@ -93,7 +93,7 @@ mutex fcu_subscription_mutex;
 
 pthread_t gimbal_control_thread;
 E_DjiMountPosition gimbal_mount_position = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
-E_DjiGimbalMode gimbal_mode = DJI_GIMBAL_MODE_FREE;
+E_DjiGimbalMode gimbal_mode = DJI_GIMBAL_MODE_YAW_FOLLOW;
 mutex apriltag_detection_mutex;
 double u_n, v_n;
 apriltag_detection_t apriltag_detection;
@@ -375,13 +375,17 @@ void initialize_widget()
 
     T_DjiReturnCode djiStat;
     T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+    
+    std::chrono::milliseconds initial_sleep_duration(300);
+    std::this_thread::sleep_for(initial_sleep_duration);
 
     //Step 1 : Init DJI Widget
     djiStat = DjiWidget_Init();
     if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("Dji test widget init error, stat = 0x%08llX", djiStat);
     }
-
+    
+    std::this_thread::sleep_for(initial_sleep_duration);
     //Step 2 : Set UI Config (Linux environment)
     char curFileDirPath[WIDGET_DIR_PATH_LEN_MAX];
     char tempPath[WIDGET_DIR_PATH_LEN_MAX];
@@ -389,6 +393,8 @@ void initialize_widget()
     if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", djiStat);
     }
+    
+    std::this_thread::sleep_for(initial_sleep_duration);
 
     if (s_isWidgetFileDirPathConfigured == true) {
         snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", s_widgetFileDirPath);
@@ -396,6 +402,8 @@ void initialize_widget()
         snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", curFileDirPath);
     }
 
+    std::this_thread::sleep_for(initial_sleep_duration);
+    
     //set default ui config path
     djiStat = DjiWidget_RegDefaultUiConfigByDirPath(tempPath);
     if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
@@ -512,8 +520,11 @@ void* gimbal_control_function(void* args)
     T_DjiGimbalManagerRotation rotation;
 
     uint8_t smooth_factor = 255;
-    double speed_factor_yaw   = 2.75;
-    double speed_factor_pitch = 2.60;
+//    double speed_factor_yaw   = 2.75;
+//    double speed_factor_pitch = 2.60;
+    double speed_factor_yaw   = 75;
+    double speed_factor_pitch = speed_factor_yaw * 3 / 4; // 4:3 aspect ratio
+    double zoom_factor_scalar = 0.1;
 
     returnCode = DjiAircraftInfo_GetBaseInfo(&baseInfo);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
@@ -596,8 +607,8 @@ void* gimbal_control_function(void* args)
 		{
 			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 			{
-				current_speed_factor_pitch /= (opticalZoomParam.currentOpticalZoomFactor);
-				current_speed_factor_yaw   /= (opticalZoomParam.currentOpticalZoomFactor);
+				current_speed_factor_pitch /= ( zoom_factor_scalar * opticalZoomParam.currentOpticalZoomFactor );
+				current_speed_factor_yaw   /= ( zoom_factor_scalar * opticalZoomParam.currentOpticalZoomFactor );
 			}
 			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 			{
@@ -612,11 +623,13 @@ void* gimbal_control_function(void* args)
 		}
 
 		T_DjiGimbalManagerRotation rotation;
-		rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
+		//rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
+		rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
 		rotation.pitch =  - current_speed_factor_pitch * v_n;
 		rotation.roll  =  0.0;
 		rotation.yaw   =    current_speed_factor_yaw * u_n;
-		rotation.time  = 2.0;
+		//rotation.time  = 2.0;
+		rotation.time  = 0.1;
 	      
 		returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
@@ -715,6 +728,18 @@ void* camera_management_function(void* args)
 		       returnCode);
     }
 
+//		    T_DjiCameraManagerFocusPosData focus_point;
+//		    focus_point.focusX = apriltag_detection.c[0];
+//		    focus_point.focusY = apriltag_detection.c[1];
+//		    USER_LOG_INFO("Set mounted position %d camera's focus point to (%0.1f, %0.1f).",
+//				  mountPosition, apriltag_detection.c[0], apriltag_detection.c[1]);
+//		    returnCode = DjiCameraManager_SetFocusTarget(mountPosition, focus_point);
+//		    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+//			returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+//			USER_LOG_ERROR("Set mounted position %d camera's focus point(%0.1f, %0.1f) failed,"
+//				       " error code :0x%08X.", mountPosition, focus_point.focusX, focus_point.focusY,
+//				       returnCode);
+//		    }
 
 //typedef enum {
 //    DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM = 0x0,
@@ -765,64 +790,77 @@ void* camera_management_function(void* args)
 //} E_DjiCameraZoomDirection;
 		auto now = std::chrono::high_resolution_clock::now();
 		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
+		// if the april tag detection is young enough to be considered a valid recognition of the landing pad
 		if( aim_gimbal && duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
 		{
-
-//		    T_DjiCameraManagerFocusPosData focus_point;
-//		    focus_point.focusX = apriltag_detection.c[0];
-//		    focus_point.focusY = apriltag_detection.c[1];
-//		    USER_LOG_INFO("Set mounted position %d camera's focus point to (%0.1f, %0.1f).",
-//				  mountPosition, apriltag_detection.c[0], apriltag_detection.c[1]);
-//		    returnCode = DjiCameraManager_SetFocusTarget(mountPosition, focus_point);
-//		    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-//			returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-//			USER_LOG_ERROR("Set mounted position %d camera's focus point(%0.1f, %0.1f) failed,"
-//				       " error code :0x%08X.", mountPosition, focus_point.focusX, focus_point.focusY,
-//				       returnCode);
-//		    }
-
-			if( apriltag_detection_area != 0 && apriltag_detection_area < 0.05 )
+			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 			{
-				//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
-				// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
-				returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_NORMAL);
-				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+				// if the landing pad is too small
+				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.02 )
 				{
-					USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-						       " error code :0x%08X.", mountPosition, returnCode);
+					USER_LOG_INFO("landing pad too small");
+					USER_LOG_INFO("zooming in...");
+					// zoom in
+					returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_MODERATELY_SLOW);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					{
+						USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+							       " error code :0x%08X.", mountPosition, returnCode);
+					}
+				}
+				// else if the landing pad is too big
+				else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.0325 )
+				{
+					USER_LOG_INFO("landing pad too big");
+					if( opticalZoomParam.currentOpticalZoomFactor > 2.0 )
+					{
+						USER_LOG_INFO("zooming out...");
+						// zoom out
+						returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_MODERATELY_SLOW);
+						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+						{
+							USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
+								       " error code :0x%08X.", mountPosition, returnCode);
+						}
+					}
+					else
+					{
+						USER_LOG_INFO("trying to switch to wide angle camera...");
+						intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
+					}
+				}
+				else if( apriltag_detection_area != 0 ) // if the landing pad is an ok size
+				{
+					USER_LOG_INFO("landing pad ok size");
+
+					returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+					    returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+					    USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+						       " error code :0x%08X", mountPosition, returnCode);
+					}
 				}
 			}
-			else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.7 )
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
 			{
-				//    USER_LOG_INFO("Mounted position %d camera start continuous optical zoom.\r\n", position);
-				// returnCode = DjiCameraManager_StartContinuousOpticalZoom(position, zoomDirection, zoomSpeed);
-				returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_NORMAL);
-				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+				// if the landing pad is too small
+				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.015 )
 				{
-					USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-						       " error code :0x%08X.", mountPosition, returnCode);
+					intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
 				}
-			}
-			else
-			{
-			    returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
-			    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-				returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-					       " error code :0x%08X", mountPosition, returnCode);
-			    }
 			}
 		}
-		else
+		else // if the landing pad detection has timed out
 		{
-			    returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
-			    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-				returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-					       " error code :0x%08X", mountPosition, returnCode);
-			    }
+			// stop any continuous zooming
+			returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+			    returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+			    USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+			    	       " error code :0x%08X", mountPosition, returnCode);
+			}
 		}
-		USER_LOG_INFO("Current zoom factor(%0.1f)", opticalZoomParam.currentOpticalZoomFactor);
+//		USER_LOG_INFO("Current zoom factor(%0.1f)", opticalZoomParam.currentOpticalZoomFactor);
 		std::this_thread::sleep_for(sleep_duration);
 	}
     
@@ -934,7 +972,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 
 //	cout << "tags detected: " << zarray_size(detections) << endl;
 
-	cout << "tags: ( ";
+//	cout << "tags: ( ";
 	// get the minimum ID in the detections:
 	int maximum_id = -1;
         for (int i = 0; i < zarray_size(detections); i++)
@@ -961,7 +999,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 //			apriltag_detection_area /= (img.width * img.height);
 		}
 //		cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
-		cout << det->id << " ";
+//		cout << det->id << " ";
 	}
 	
 	double x1 = apriltag_detection.p[0][0];
@@ -973,13 +1011,18 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	double x4 = apriltag_detection.p[3][0];
 	double y4 = apriltag_detection.p[3][1];
 
-//	double a1 = x1*(y2-y3) + x2*(y3-y1) + x3*(y1-y2);
-//	double a2 = x1*(y3-y4) + x3*(y4-y1) + x4*(y1-y3);
-//	apriltag_detection_area = 0.5 * abs(a1) + 0.5 * abs(a2);
-	apriltag_detection_area = 0.5 * abs( (x1*y2 + x2*y3 + x3*y4 + x4*y1) - (x2*y1 + x3*y2 + x4*y3 + x1*y4) );
-	apriltag_detection_area /= (img.width * img.height);
+	double area = 0.5 * abs( (x1*y2 + x2*y3 + x3*y4 + x4*y1) - (x2*y1 + x3*y2 + x4*y3 + x1*y4) ) / (img.width * img.height);
 
-	cout << ") id: " << apriltag_detection.id << ", area: " << apriltag_detection_area << endl;
+	if( apriltag_detection_area == 0 )
+	{
+		apriltag_detection_area = area;
+	}
+	else
+	{
+		apriltag_detection_area = 0.75*area + 0.25*apriltag_detection_area;
+	}
+
+//	cout << ") id: " << apriltag_detection.id << ", area: " << apriltag_detection_area << endl;
 
 #if VISUALIZE
         // Draw detection outlines
