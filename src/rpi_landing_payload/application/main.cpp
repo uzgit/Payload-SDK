@@ -24,6 +24,18 @@
 
 #define MAIN_CAMERA 1
 #define VISUALIZE 0
+#define ENABLE_CAMERA_SWITCHING 1
+#define ENABLE_PID_SWITCHING    1
+
+#define FOCAL_LENGTH_WIDE     4.50
+#define SENSOR_WIDTH_WIDE     6.29
+#define SENSOR_HEIGHT_WIDE    4.71
+#define FOCAL_LENGTH_ZOOM     6.83 // this is the base focal length -- can be up to 119.94
+#define SENSOR_WIDTH_ZOOM     7.41
+#define SENSOR_HEIGHT_ZOOM    5.56
+#define FOCAL_LENGTH_THERMAL  13.5
+#define SENSOR_WIDTH_THERMAL  7.68
+#define SENSOR_HEIGHT_THERMAL 6.144
 
 // standard includes
 #include <csignal>
@@ -78,6 +90,8 @@
 #include "dji_platform.h"
 #include "dji_logger.h"
 
+#include "pid.h"
+
 using namespace std;
 using namespace cv;
 using namespace chrono;
@@ -96,6 +110,7 @@ E_DjiMountPosition gimbal_mount_position = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
 E_DjiGimbalMode gimbal_mode = DJI_GIMBAL_MODE_YAW_FOLLOW;
 mutex apriltag_detection_mutex;
 double u_n, v_n;
+double theta_u, theta_v;
 apriltag_detection_t apriltag_detection;
 double apriltag_detection_area;
 chrono::system_clock::time_point apriltag_detection_timestamp = chrono::system_clock::from_time_t(0);
@@ -349,7 +364,7 @@ static void *DjiTest_WidgetTask(void *arg)
 
 #ifndef USER_FIRMWARE_MAJOR_VERSION
         snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
-			"System time (s) : %.1f\nCPU temp (C)  : %.1f \nApril Tag px: (%.2f, %.2f)\n", sysTimeMs/1000.0, cpu_temperature(), u_n, v_n);
+			"System time (s) : %.1f\nCPU temp (C)  : %.1f \nApril Tag: (%.5f, %.5f)\n", sysTimeMs/1000.0, cpu_temperature(), theta_u, theta_v);// u_n, v_n);
 //        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN, "CPU temp C  : %f ms\n", cpu_temperature());
 #else
         snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
@@ -522,8 +537,12 @@ void* gimbal_control_function(void* args)
     uint8_t smooth_factor = 255;
 //    double speed_factor_yaw   = 2.75;
 //    double speed_factor_pitch = 2.60;
-    double speed_factor_yaw   = 75;
-    double speed_factor_pitch = speed_factor_yaw * 3 / 4; // 4:3 aspect ratio
+//    double speed_factor_yaw     = 3;
+//    double speed_factor_pitch   = 2.75;
+    double speed_factor_yaw     = 1;
+    double speed_factor_pitch   = 1;
+//    double speed_factor_yaw   = 120;
+//    double speed_factor_pitch = speed_factor_yaw * 3 / 4; // 4:3 aspect ratio
     double zoom_factor_scalar = 0.1;
 
     returnCode = DjiAircraftInfo_GetBaseInfo(&baseInfo);
@@ -532,6 +551,24 @@ void* gimbal_control_function(void* args)
         USER_LOG_ERROR("Failed to get aircraft base info, return code 0x%08X", returnCode);
         return nullptr;
     }
+
+    //PID::PID( double dt, double max, double min, double Kp, double Kd, double Ki )
+    // for angles
+//    PID pid_u = PID(0.1, 10, -10, 2.5, 0.2, 0);
+//    PID pid_v = PID(0.1, 10, -10, 1.5, 0.1, 0);
+    PID pid_u_s = PID(0.1, 100, -100, 150, 30, 1.0);
+    PID pid_v_s = PID(0.1, 100, -100, 150, 30, 1.0);
+    
+    PID pid_u_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+    PID pid_v_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+
+//    PID pid_u = PID(2.5, 0.00001, 0.0, 1);
+//    pid_u.set_set_point(0);
+//    pid_u.printParameters();
+    
+//    PID pid_v = PID(2.5, 0.75, 0.01, 10);
+//    pid_v.set_set_point(0);
+//    pid_v.printParameters();
 
     aircraftSeries = baseInfo.aircraftSeries;
 
@@ -591,7 +628,7 @@ void* gimbal_control_function(void* args)
 //	cout << "time since apriltag detection:" << duration.count() << endl;
 
 	double u,v;
-	if( aim_gimbal && duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
+	if( duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
 	{
 		apriltag_detection_mutex.lock();
 		u = apriltag_detection.c[0];
@@ -600,41 +637,89 @@ void* gimbal_control_function(void* args)
 		u_n = (u - global_image_half_width)  / global_image_half_width;
 		v_n = (v - global_image_half_height) / global_image_half_height;
 
-		double current_speed_factor_pitch = speed_factor_pitch;
-		double current_speed_factor_yaw = speed_factor_yaw;
-
-		if( current_stream_source == intended_stream_source )
+		if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
 		{
-			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
-			{
-				current_speed_factor_pitch /= ( zoom_factor_scalar * opticalZoomParam.currentOpticalZoomFactor );
-				current_speed_factor_yaw   /= ( zoom_factor_scalar * opticalZoomParam.currentOpticalZoomFactor );
-			}
-			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
-			{
-				current_speed_factor_pitch /=  2;
-				current_speed_factor_yaw   /=  2;
-			}
+			theta_u = u_n * atan( SENSOR_WIDTH_WIDE  / (2 * FOCAL_LENGTH_WIDE ) );
+			theta_v = v_n * atan( SENSOR_HEIGHT_WIDE / (2 * FOCAL_LENGTH_WIDE ) );
 		}
-		else
+		else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 		{
-			current_speed_factor_pitch = 0;
-			current_speed_factor_yaw   = 0;
+			theta_u = u_n * atan( SENSOR_WIDTH_WIDE   / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
+			theta_v = v_n * atan( SENSOR_HEIGHT_WIDE  / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
+		}
+		else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+		{
+			theta_u = u_n * atan( SENSOR_WIDTH_ZOOM  / (2 * FOCAL_LENGTH_ZOOM ) );
+			theta_v = v_n * atan( SENSOR_HEIGHT_ZOOM / (2 * FOCAL_LENGTH_ZOOM ) );
 		}
 
-		T_DjiGimbalManagerRotation rotation;
-		//rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
-		rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
-		rotation.pitch =  - current_speed_factor_pitch * v_n;
-		rotation.roll  =  0.0;
-		rotation.yaw   =    current_speed_factor_yaw * u_n;
-		//rotation.time  = 2.0;
-		rotation.time  = 0.1;
-	      
-		returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
-		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//		cout << "( " << theta_u << " , " << theta_v << " )" << endl;
+		
+		if( aim_gimbal )
 		{
-			cerr << "error moving the gimbal!" << endl;
+			T_DjiGimbalManagerRotation rotation;
+			
+			double actuation_u_a = 0;
+			double actuation_v_a = 0;
+			double actuation_u_s = 0;
+			double actuation_v_s = 0;
+			
+			actuation_u_a = pid_u_a.calculate(0, theta_u);
+			actuation_v_a = pid_v_a.calculate(0, theta_v);
+			actuation_u_s = pid_u_s.calculate(0, theta_u);
+			actuation_v_s = pid_v_s.calculate(0, theta_v);
+
+
+//			actuation_u = pid_u.output( theta_u );
+//			actuation_v = pid_v.output( theta_v );
+
+			cout << "actuation: " << actuation_u_a << " , " << actuation_v_a << endl;
+
+#if ENABLE_PID_SWITCHING
+			if( abs(actuation_u_a) > 0.11 || abs(actuation_v_a) > 0.11 )
+			{
+#endif
+				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
+				rotation.pitch =  1.0 * actuation_v_a;
+				rotation.roll  =  0.0;
+				rotation.yaw   =  -1.0 * actuation_u_a;
+				rotation.time  = 2.0;
+
+				cout << "angle actuation" << endl;
+#if ENABLE_PID_SWITCHING				
+			}
+			else
+			{
+				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
+				rotation.pitch =  1.0 * actuation_v_s;
+				rotation.roll  =  0.0;
+				rotation.yaw   =  -1.0 * actuation_u_s;
+				rotation.time  = 0.1;
+
+				cout << "speed actuation" << endl;
+			}
+#endif
+
+//			T_DjiGimbalManagerRotation rotation;
+////			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
+//			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
+//			rotation.pitch =  1.0 * actuation_v;
+//			rotation.roll  =  0.0;
+//			rotation.yaw   =  -1.0 * actuation_u;
+//			rotation.time  = 0.1;
+
+//			T_DjiGimbalManagerRotation rotation;
+//			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
+//			rotation.pitch =  actuation_v;
+//			rotation.roll  =  0.0;
+//			rotation.yaw   =  actuation_u;
+//			rotation.time  = 0.1;
+		      
+			returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
+			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+			{
+				cerr << "error moving the gimbal!" << endl;
+			}
 		}
 	}
 
