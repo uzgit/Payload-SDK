@@ -42,6 +42,7 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <exception>
 
 #include "opencv2/opencv.hpp"
 #include "opencv2/dnn.hpp"
@@ -90,11 +91,15 @@
 #include "dji_platform.h"
 #include "dji_logger.h"
 
+#include <dji_flight_controller.h>
+
 #include "pid.h"
 
 using namespace std;
 using namespace cv;
 using namespace chrono;
+
+T_DjiAircraftInfoBaseInfo baseInfo;
 
 // global variables :(
 bool running = true; // can only be changed to false only in one single place
@@ -114,27 +119,30 @@ double theta_u, theta_v;
 apriltag_detection_t apriltag_detection;
 double apriltag_detection_area;
 chrono::system_clock::time_point apriltag_detection_timestamp = chrono::system_clock::from_time_t(0);
+double aircraft_yaw = 0;
 
 pthread_t camera_management_thread;
-typedef struct {
-    E_DjiCameraType cameraType;
-    char *cameraTypeStr;
+typedef struct
+{
+	E_DjiCameraType cameraType;
+	char *cameraTypeStr;
 } T_DjiTestCameraTypeStr;
-static const T_DjiTestCameraTypeStr s_cameraTypeStrList[] = {
-    {DJI_CAMERA_TYPE_UNKNOWN, "Unknown"},
-    {DJI_CAMERA_TYPE_Z30,     "Zenmuse Z30"},
-    {DJI_CAMERA_TYPE_XT2,     "Zenmuse XT2"},
-    {DJI_CAMERA_TYPE_PSDK,    "Payload Camera"},
-    {DJI_CAMERA_TYPE_XTS,     "Zenmuse XTS"},
-    {DJI_CAMERA_TYPE_H20,     "Zenmuse H20"},
-    {DJI_CAMERA_TYPE_H20T,    "Zenmuse H20T"},
-    {DJI_CAMERA_TYPE_P1,      "Zenmuse P1"},
-    {DJI_CAMERA_TYPE_L1,      "Zenmuse L1"},
-    {DJI_CAMERA_TYPE_H20N,    "Zenmuse H20N"},
-    {DJI_CAMERA_TYPE_M30,     "M30 Camera"},
-    {DJI_CAMERA_TYPE_M30T,    "M30T Camera"},
-    {DJI_CAMERA_TYPE_M3E,     "M3E Camera"},
-    {DJI_CAMERA_TYPE_M3T,     "M3T Camera"},
+static const T_DjiTestCameraTypeStr s_cameraTypeStrList[] =
+{
+	{DJI_CAMERA_TYPE_UNKNOWN, "Unknown"},
+	{DJI_CAMERA_TYPE_Z30,     "Zenmuse Z30"},
+	{DJI_CAMERA_TYPE_XT2,     "Zenmuse XT2"},
+	{DJI_CAMERA_TYPE_PSDK,    "Payload Camera"},
+	{DJI_CAMERA_TYPE_XTS,     "Zenmuse XTS"},
+	{DJI_CAMERA_TYPE_H20,     "Zenmuse H20"},
+	{DJI_CAMERA_TYPE_H20T,    "Zenmuse H20T"},
+	{DJI_CAMERA_TYPE_P1,      "Zenmuse P1"},
+	{DJI_CAMERA_TYPE_L1,      "Zenmuse L1"},
+	{DJI_CAMERA_TYPE_H20N,    "Zenmuse H20N"},
+	{DJI_CAMERA_TYPE_M30,     "M30 Camera"},
+	{DJI_CAMERA_TYPE_M30T,    "M30T Camera"},
+	{DJI_CAMERA_TYPE_M3E,     "M3E Camera"},
+	{DJI_CAMERA_TYPE_M3T,     "M3T Camera"},
 };
 E_DjiCameraManagerStreamSource current_stream_source = DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM;
 E_DjiCameraManagerStreamSource intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
@@ -155,13 +163,14 @@ bool autonomous_control_default = false;
 #define WIDGET_TASK_STACK_SIZE          (2048)
 static T_DjiReturnCode DjiTestWidget_SetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t value, void *userData);
 static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t *value, void *userData);
-static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
+static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] =
+{
 //    {0, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {1, DJI_WIDGET_TYPE_LIST,          DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
-    {0, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
-    {1, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
-    {2, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
-    {3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{0, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{1, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{2, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {3, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {4, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {5, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
@@ -171,6 +180,8 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] = {
 };
 static const uint32_t s_widgetHandlerListCount = sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem);
 static int32_t s_widgetValueList[sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem)] = {0};
+
+pthread_t flight_control_thread;
 
 #if MAIN_CAMERA
 const char* camera_name = "MAIN_CAM";
@@ -186,9 +197,10 @@ double global_image_half_height = 0;
 // function declarations
 void initialize();
 void deinitialize();
-void sigint_handler();
+void graceful_exit();
 void* subscription_thread_function(void* args);
 void* gimbal_control_function(void* args);
+void* flight_control_function(void* args);
 void* camera_management_function(void* args);
 //void* widget_poll_function(void* args);
 static void apriltag_image_callback(CameraRGBImage img, void *userData);
@@ -198,78 +210,94 @@ void initialize_widget();
 static T_DjiReturnCode DjiTest_HighPowerApplyPinInit();
 static T_DjiReturnCode DjiTest_WriteHighPowerApplyPin(E_DjiPowerManagementPinState pinState);
 
-void sigint_handler(int signal)
+void graceful_exit(int signal)
 {
 	running = false;
-	cout << "sending signal for graceful exit..." << endl;
+	cout << "received signal " << signal << " for graceful exit..." << endl;
 }
 
 void initialize()
 {
+
+	T_DjiReturnCode returnCode;
+	returnCode = DjiAircraftInfo_GetBaseInfo(&baseInfo);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Failed to get aircraft base info, return code 0x%08X", returnCode);
+		return deinitialize();
+	}
+
 //    DjiTest_WidgetStartService();
 //    if( pthread_create( & widget_poll_thread, NULL, widget_poll_function, NULL ) )
 //    {
 //	cout << "problem" << endl;
 //	return deinitialize();
 //    }
-    initialize_widget();
+	initialize_widget();
 
-    if ( DjiTest_WidgetSpeakerStartService() )
-    {
-	USER_LOG_ERROR("widget speaker test init error");
-    }
+	if ( DjiTest_WidgetSpeakerStartService() )
+	{
+		USER_LOG_ERROR("widget speaker test init error");
+	}
 
-    // initialize fcu subscription thread
-    if( pthread_create( & subscription_thread, NULL, subscription_thread_function, NULL ) )
-    {
-	cout << "problem" << endl;
-	return deinitialize();
-    }
-    
+	// initialize fcu subscription thread
+	if( pthread_create( & subscription_thread, NULL, subscription_thread_function, NULL ) )
+	{
+		cout << "problem" << endl;
+		return deinitialize();
+	}
 
-    LiveviewSample* liveviewSample = new LiveviewSample();
+
+	LiveviewSample* liveviewSample = new LiveviewSample();
 #if MAIN_CAMERA
-    liveviewSample->joshua_start_camera_stream_main(&apriltag_image_callback, &camera_name);
+	liveviewSample->joshua_start_camera_stream_main(&apriltag_image_callback, &camera_name);
 
-    // initialize gimbal control thread
-    if( pthread_create( & gimbal_control_thread, NULL, gimbal_control_function, NULL ) )
-    {
-	cout << "problem" << endl;
-	return deinitialize();
-    }
-    
-    // initialize gimbal control thread
-    if( pthread_create( & camera_management_thread, NULL, camera_management_function, NULL ) )
-    {
-	cout << "problem" << endl;
-	return deinitialize();
-    }
+	// initialize gimbal control thread
+	if( pthread_create( & gimbal_control_thread, NULL, gimbal_control_function, NULL ) )
+	{
+		cout << "problem" << endl;
+		return deinitialize();
+	}
+
+	// initialize gimbal control thread
+	if( pthread_create( & camera_management_thread, NULL, camera_management_function, NULL ) )
+	{
+		cout << "problem" << endl;
+		return deinitialize();
+	}
 #else
-    liveviewSample->start_camera_stream(&apriltag_image_callback, &camera_name);
+	liveviewSample->start_camera_stream(&apriltag_image_callback, &camera_name);
 #endif
+
+	if( pthread_create( & flight_control_thread, NULL, flight_control_function, NULL ) )
+	{
+		cout << "problem" << endl;
+		return deinitialize();
+	}
 }
 
 void deinitialize()
 {
-    cout << "deinitializing..." << endl;
-//    cout << "joining widget poll thread" << endl;
-//    pthread_join( widget_poll_thread, NULL );
-    cout << "joining FCU data retrieval thread" << endl;
-    pthread_join( subscription_thread, NULL );
-#if MAIN_CAMERA
-    cout << "joining gimbal control thread" << endl;
-    pthread_join( gimbal_control_thread, NULL );
-    cout << "joining camera management thread" << endl;
-    pthread_join( camera_management_thread, NULL );
-#else
-    cout << "using FPV cam: no gimbal thread to join" << endl;
-#endif
-    cout << "all threads joined" << endl;
+	USER_LOG_INFO("deinitializing...");
+	USER_LOG_INFO("joining FCU data retrieval thread");
+	pthread_join(subscription_thread, NULL);
 
-    // liveviewSample->stop_camera_stream
-    cout << "deleting liveview object" << endl;
-    delete liveviewSample;
-    cout << "deleted liveview object" << endl;
+#if MAIN_CAMERA
+	USER_LOG_INFO("joining gimbal control thread");
+	pthread_join(gimbal_control_thread, NULL);
+	USER_LOG_INFO("joining camera management thread");
+	pthread_join(camera_management_thread, NULL);
+#else
+	USER_LOG_INFO("using FPV cam: no gimbal thread to join");
+#endif
+
+	USER_LOG_INFO("joining flight control thread");
+	pthread_join(flight_control_thread, NULL);
+	USER_LOG_INFO("all threads joined");
+
+	USER_LOG_INFO("deleting liveview object");
+	delete liveviewSample;
+	USER_LOG_INFO("deleted liveview object");
 }
 
 // *******************************************************************************************************************************
@@ -279,200 +307,243 @@ static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = {0};
 //static char s_widgetFileDirPath[DJI_FILE_PATH_SIZE_MAX] = "/home/joshua/git/Payload-SDK/samples/sample_c/module_sample/rpi_landing_widget/";
 
 
-static const char *s_widgetTypeNameArray[] = {
-    "Unknown",
-    "Button",
-    "Switch",
-    "Scale",
-    "List",
-    "Int input box"
+static const char *s_widgetTypeNameArray[] =
+{
+	"Unknown",
+	"Button",
+	"Switch",
+	"Scale",
+	"List",
+	"Int input box"
 };
 static T_DjiReturnCode DjiTestWidget_SetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t value, void *userData)
 {
 //    cout << "set widget value" << endl;
-    
-    widget_mutex.lock();
-    USER_UTIL_UNUSED(userData);
-    USER_LOG_INFO("Set widget value, widgetType = %s, widgetIndex = %d ,widgetValue = %d", s_widgetTypeNameArray[widgetType], index, value);
-    s_widgetValueList[index] = value;
-    widget_mutex.unlock();
 
-    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+	widget_mutex.lock();
+	USER_UTIL_UNUSED(userData);
+	USER_LOG_INFO("Set widget value, widgetType = %s, widgetIndex = %d ,widgetValue = %d", s_widgetTypeNameArray[widgetType], index, value);
+	s_widgetValueList[index] = value;
+	widget_mutex.unlock();
+
+	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t *value, void *userData)
 {
 //    cout << "get widget value" << endl;
-    
-    widget_mutex.lock();
-    USER_UTIL_UNUSED(userData);
-    USER_UTIL_UNUSED(widgetType);
-    *value = s_widgetValueList[index];
 
-    if( index == aim_gimbal_index )
-    {
-	    aim_gimbal = (bool) *value;
-    }
-    else if( index == autonomous_control_index )
-    {
-	    autonomous_control = (bool) *value;
-    }
+	widget_mutex.lock();
+	USER_UTIL_UNUSED(userData);
+	USER_UTIL_UNUSED(widgetType);
+	*value = s_widgetValueList[index];
 
-    widget_mutex.unlock();
+	if( index == aim_gimbal_index )
+	{
+		aim_gimbal = (bool) *value;
+	}
+	else if( index == autonomous_control_index )
+	{
+		autonomous_control = (bool) *value;
+	}
 
-    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+	widget_mutex.unlock();
+
+	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 double cpu_temperature()
 {
-    std::string thermal_zone = "/sys/class/thermal/thermal_zone0/temp";
-    std::ifstream temp_file(thermal_zone);
-    if (!temp_file) {
-        std::cerr << "Failed to open temperature file." << std::endl;
-        return -1;
-    }
+	std::string thermal_zone = "/sys/class/thermal/thermal_zone0/temp";
+	std::ifstream temp_file(thermal_zone);
+	if (!temp_file)
+	{
+		std::cerr << "Failed to open temperature file." << std::endl;
+		return -1;
+	}
 
-    double temperature;
-    temp_file >> temperature;
-    temp_file.close();
+	double temperature;
+	temp_file >> temperature;
+	temp_file.close();
 
-    // The temperature is usually in millidegrees Celsius, so divide by 1000 to get degrees Celsius
-    return temperature / 1000.0;
+	// The temperature is usually in millidegrees Celsius, so divide by 1000 to get degrees Celsius
+	return temperature / 1000.0;
+}
+
+double get_landing_pad_relative_pitch()
+{
+	return gimbal_angles.x - theta_v * 180 / M_PI;
+}
+
+double get_landing_pad_relative_yaw()
+{
+	return theta_u + gimbal_angles.z - aircraft_yaw;
 }
 
 static void *DjiTest_WidgetTask(void *arg)
 {
-    char message[DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN];
-    uint32_t sysTimeMs = 0;
-    T_DjiReturnCode djiStat;
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	cout << "lalalalala" << endl;
+	char message[DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN];
+	uint32_t sysTimeMs = 0;
+	T_DjiReturnCode djiStat;
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
 
-    USER_UTIL_UNUSED(arg);
+	USER_UTIL_UNUSED(arg);
 
-//    osalHandler->TaskSleepMs(3000);
+	DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, aim_gimbal_index, (int32_t) aim_gimbal_default, nullptr);
+	DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, autonomous_control_index, autonomous_control_default, nullptr);
 
-    DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, aim_gimbal_index, (int32_t) aim_gimbal_default, nullptr);
-    DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, autonomous_control_index, autonomous_control_default, nullptr);
-    
-    while( running )
-    {
-        djiStat = osalHandler->GetTimeMs(&sysTimeMs);
-        if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	while( running )
 	{
-            USER_LOG_ERROR("Get system time ms error, stat = 0x%08llX", djiStat);
-        }
+		djiStat = osalHandler->GetTimeMs(&sysTimeMs);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Get system time ms error, stat = 0x%08llX", djiStat);
+		}
 
 #ifndef USER_FIRMWARE_MAJOR_VERSION
-        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
-			"System time (s) : %.1f\nCPU temp (C)  : %.1f \nApril Tag: (%.5f, %.5f)\n", sysTimeMs/1000.0, cpu_temperature(), theta_u, theta_v);// u_n, v_n);
+		snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
+		         "System time (s) : %.1f\nCPU temp (C)  : %.1f \nApril Tag: (%.5f, %.5f)\n", sysTimeMs/1000.0, cpu_temperature(), get_landing_pad_relative_pitch(), get_landing_pad_relative_yaw());//, theta_u, theta_v);// u_n, v_n);
 //        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN, "CPU temp C  : %f ms\n", cpu_temperature());
 #else
-        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
-                 "System time : %u s\r\nVersion: v%02d.%02d.%02d.%02d\r\nBuild time: %s %s", sysTimeMs,
-                 USER_FIRMWARE_MAJOR_VERSION, USER_FIRMWARE_MINOR_VERSION,
-                 USER_FIRMWARE_MODIFY_VERSION, USER_FIRMWARE_DEBUG_VERSION,
-                 __DATE__, __TIME__);
+		snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
+		         "System time : %u s\r\nVersion: v%02d.%02d.%02d.%02d\r\nBuild time: %s %s", sysTimeMs,
+		         USER_FIRMWARE_MAJOR_VERSION, USER_FIRMWARE_MINOR_VERSION,
+		         USER_FIRMWARE_MODIFY_VERSION, USER_FIRMWARE_DEBUG_VERSION,
+		         __DATE__, __TIME__);
 #endif
 
-        djiStat = DjiWidgetFloatingWindow_ShowMessage(message);
-        if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-	{
-            USER_LOG_ERROR("Floating window show message error, stat = 0x%08llX", djiStat);
-        }
+		djiStat = DjiWidgetFloatingWindow_ShowMessage(message);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Floating window show message error, stat = 0x%08llX", djiStat);
+		}
 
-        osalHandler->TaskSleepMs(50);
-    }
+		osalHandler->TaskSleepMs(50);
+	}
 }
 
 void initialize_widget()
 {
-    printf("in the rpi pidget start function\n");
+	USER_LOG_INFO("Starting the widget.");
 
-    T_DjiReturnCode djiStat;
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-    
-    std::chrono::milliseconds initial_sleep_duration(300);
-    std::this_thread::sleep_for(initial_sleep_duration);
+	T_DjiReturnCode djiStat;
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
 
-    //Step 1 : Init DJI Widget
-    djiStat = DjiWidget_Init();
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Dji test widget init error, stat = 0x%08llX", djiStat);
-    }
-    
-    std::this_thread::sleep_for(initial_sleep_duration);
-    //Step 2 : Set UI Config (Linux environment)
-    char curFileDirPath[WIDGET_DIR_PATH_LEN_MAX];
-    char tempPath[WIDGET_DIR_PATH_LEN_MAX];
-    djiStat = DjiUserUtil_GetCurrentFileDirPath(__FILE__, WIDGET_DIR_PATH_LEN_MAX, curFileDirPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", djiStat);
-    }
-    
-    std::this_thread::sleep_for(initial_sleep_duration);
+//	std::chrono::milliseconds initial_sleep_duration(300);
+//	std::this_thread::sleep_for(initial_sleep_duration);
 
-    if (s_isWidgetFileDirPathConfigured == true) {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", s_widgetFileDirPath);
-    } else {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", curFileDirPath);
-    }
 
-    std::this_thread::sleep_for(initial_sleep_duration);
-    
-    //set default ui config path
-    djiStat = DjiWidget_RegDefaultUiConfigByDirPath(tempPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Add default widget ui config error, stat = 0x%08llX", djiStat);
-    }
+	cout << "before" << endl;
+	// initialize DJI Widget
+	djiStat = DjiWidget_Init();
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Dji test widget init error, stat = 0x%08llX", djiStat);
+	}
+	cout << "after" << endl;
 
-    //set ui config for English language
-    djiStat = DjiWidget_RegUiConfigByDirPath(DJI_MOBILE_APP_LANGUAGE_ENGLISH,
-                                             DJI_MOBILE_APP_SCREEN_TYPE_BIG_SCREEN,
-                                             tempPath);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Add widget ui config error, stat = 0x%08llX", djiStat);
-    }
+//	std::this_thread::sleep_for(initial_sleep_duration);
 
-    //set ui config for Chinese language
-    if (s_isWidgetFileDirPathConfigured == true) {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", s_widgetFileDirPath);
-    } else {
-        snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", curFileDirPath);
-    }
+	cout << "before2" << endl;
+	// set UI Config (Linux environment)
+	char curFileDirPath[WIDGET_DIR_PATH_LEN_MAX];
+	char tempPath[WIDGET_DIR_PATH_LEN_MAX];
+	djiStat = DjiUserUtil_GetCurrentFileDirPath(__FILE__, WIDGET_DIR_PATH_LEN_MAX, curFileDirPath);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Get file current path error, stat = 0x%08llX", djiStat);
+	}
+	cout << curFileDirPath << endl;
+	cout << tempPath << endl;
+	cout << "after2" << endl;
 
-    //Step 3 : Set widget handler list
-    djiStat = DjiWidget_RegHandlerList(s_widgetHandlerList, s_widgetHandlerListCount);
-    if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Set widget handler list error, stat = 0x%08llX", djiStat);
-    }
+//	std::this_thread::sleep_for(initial_sleep_duration);
 
-    //Step 4 : Run widget api sample task
-    if (osalHandler->TaskCreate("user_widget_task", DjiTest_WidgetTask, WIDGET_TASK_STACK_SIZE, NULL,
-                                &s_widgetTestThread) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Dji widget test task create error.");
-    }
+	if (s_isWidgetFileDirPathConfigured == true)
+	{
+		snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", s_widgetFileDirPath);
+	}
+	else
+	{
+		snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/en_big_screen", curFileDirPath);
+	}
+
+//	std::this_thread::sleep_for(initial_sleep_duration);
+
+	// set default ui config path
+	djiStat = DjiWidget_RegDefaultUiConfigByDirPath(tempPath);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Add default widget ui config error, stat = 0x%08llX", djiStat);
+	}
+
+	// set ui config for English language
+	djiStat = DjiWidget_RegUiConfigByDirPath(DJI_MOBILE_APP_LANGUAGE_ENGLISH,
+	          DJI_MOBILE_APP_SCREEN_TYPE_BIG_SCREEN,
+	          tempPath);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Add widget ui config error, stat = 0x%08llX", djiStat);
+	}
+
+	// set ui config for Chinese language
+	if (s_isWidgetFileDirPathConfigured == true)
+	{
+		snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", s_widgetFileDirPath);
+	}
+	else
+	{
+		snprintf(tempPath, WIDGET_DIR_PATH_LEN_MAX, "%swidget_file/cn_big_screen", curFileDirPath);
+	}
+
+	// set widget handler list
+	djiStat = DjiWidget_RegHandlerList(s_widgetHandlerList, s_widgetHandlerListCount);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Set widget handler list error, stat = 0x%08llX", djiStat);
+	}
+
+	// run widget api sample task
+	if (osalHandler->TaskCreate("user_widget_task", DjiTest_WidgetTask, WIDGET_TASK_STACK_SIZE, NULL,
+	                            &s_widgetTestThread) != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Dji widget test task create error.");
+	}
 }
 
 void* subscription_thread_function(void* args)
 {
-	cout << "\tstarting data retrival thread" << endl;
-	
+	USER_LOG_INFO("Starting data retrival thread.");
+
 	// initialize fcu subscription
 	djiStat = DjiFcSubscription_Init();
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-		USER_LOG_ERROR("init data subscription module error.");
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error initializing data subscription module error.");
 	}
 
-	// subscribe to gimbal angles topic
+	T_DjiFcSubscriptionQuaternion quaternion = {0};
+
+	// subscribe to the gimbal angles topic
 	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
 		USER_LOG_ERROR("Error subscribing to the gimbal angles topic!");
 	}
-	
-	// subscribe to gimbal angles topic
+
+	// subscribe to the RC topic
 	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-		USER_LOG_ERROR("Error subscribing to the gimbal angles topic!");
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the RC topic!");
+	}
+
+	// subscribe to the attitude quaternion
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the quaternion topic!");
 	}
 
 	while(running)
@@ -480,338 +551,472 @@ void* subscription_thread_function(void* args)
 		// ***********************************************************************************************
 		fcu_subscription_mutex.lock();
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES,
-								  (uint8_t *) &gimbal_angles,
-								  sizeof(T_DjiFcSubscriptionGimbalAngles),
-								  &timestamp);
+		          (uint8_t *) &gimbal_angles,
+		          sizeof(T_DjiFcSubscriptionGimbalAngles),
+		          &timestamp);
 		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 		{
-		    USER_LOG_ERROR("Error getting the gimbal angles!");
+			USER_LOG_ERROR("Error getting the gimbal angles!");
 		}
 
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC,
-								  (uint8_t *) &rc_status,
-								  sizeof(T_DjiFcSubscriptionRC),
-								  &timestamp);
+		          (uint8_t *) &rc_status,
+		          sizeof(T_DjiFcSubscriptionRC),
+		          &timestamp);
 		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 		{
-		    USER_LOG_ERROR("Error getting the rc topic!");
+			USER_LOG_ERROR("Error getting the rc topic!");
+		}
+
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
+		          (uint8_t *) &quaternion,
+		          sizeof(T_DjiFcSubscriptionQuaternion),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the quaternion topic!");
 		}
 		fcu_subscription_mutex.unlock();
 		// ***********************************************************************************************
+
+		double aircraftYawInRad = atan2(2 * ((double) quaternion.q0 * quaternion.q3 + (double) quaternion.q1 * quaternion.q2),
+		                                (double) 1 -
+		                                2 * ((double) quaternion.q2 * quaternion.q2 + (double) quaternion.q3 * quaternion.q3));
+		aircraft_yaw = aircraftYawInRad * 180 / DJI_PI;
 
 		if( autonomous_control && (abs(rc_status.pitch) > 1000 || abs(rc_status.roll) > 1000 || abs(rc_status.yaw) > 1000 || abs(rc_status.throttle) > 1000) )
 		{
 			autonomous_control = false;
 			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, autonomous_control_index, (int32_t)autonomous_control, nullptr);
 
-			cout << "Disabling autonomous control because of manual stick input!" << endl;
+			USER_LOG_INFO("Disabling autonomous control because of manual stick input!");
 		}
 
 		std::chrono::milliseconds sleep_duration(20);
 		std::this_thread::sleep_for(sleep_duration);
 	}
 
-	cout << "unsubscribing from fcu topics" << endl;
+	USER_LOG_INFO("Unsubscribing from FCU data topics.");
 	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-		USER_LOG_ERROR("Error unsubscribing from the gimbal angles topic!");
-	}
-	
-	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
 		USER_LOG_ERROR("Error unsubscribing from the gimbal angles topic!");
 	}
 
-	cout << "\tending data retrival thread" << endl;
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_RC);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the RC topic!");
+	}
+
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the quaternion topic!");
+	}
+
+	USER_LOG_INFO("Ending data retrieval thread.");
 	return nullptr;
+}
+
+void* flight_control_function(void* args)
+{
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	T_DjiReturnCode returnCode;
+	E_DjiFlightControllerObstacleAvoidanceEnableStatus horizontalVisualObstacleAvoidanceStatus;
+	E_DjiFlightControllerObstacleAvoidanceEnableStatus horizontalRadarObstacleAvoidanceStatus;
+	E_DjiFlightControllerObstacleAvoidanceEnableStatus upwardsVisualObstacleAvoidanceStatus;
+	E_DjiFlightControllerObstacleAvoidanceEnableStatus upwardsRadarObstacleAvoidanceStatus;
+	E_DjiFlightControllerObstacleAvoidanceEnableStatus downloadsVisualObstacleAvoidanceStatus;
+	E_DjiFlightControllerGoHomeAltitude goHomeAltitude;
+	E_DjiFlightControllerRtkPositionEnableStatus rtkEnableStatus;
+	E_DjiFlightControllerRCLostAction rcLostAction;
+	T_DjiAircraftInfoBaseInfo aircraftInfoBaseInfo;
+
+	T_DjiFlightControllerRidInfo ridInfo = {0};
+	ridInfo.latitude = 22.542812;
+	ridInfo.longitude = 113.958902;
+	ridInfo.altitude = 10;
+
+	returnCode = DjiFlightController_Init(ridInfo);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Initializing flight controller module failed, error code:0x%08llX", returnCode);
+		return nullptr;
+	}
+
+	returnCode = DjiAircraftInfo_GetBaseInfo(&aircraftInfoBaseInfo);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("get aircraft base info error");
+	}
+
+	/*! Turn on horizontal vision avoid enable */
+	USER_LOG_INFO("Turning on horizontal visual obstacle avoidance");
+	DjiTest_WidgetLogAppend("Turning on horizontal visual obstacle avoidance");
+	returnCode = DjiFlightController_SetHorizontalVisualObstacleAvoidanceEnableStatus(DJI_FLIGHT_CONTROLLER_ENABLE_OBSTACLE_AVOIDANCE);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Turning on horizontal visual obstacle avoidance failed, error code: 0x%08X", returnCode);
+	};
+	USER_LOG_INFO("Getting horizontal visual obstacle status");
+	DjiTest_WidgetLogAppend("Getting horizontal horizontal visual obstacle status");
+	returnCode = DjiFlightController_GetHorizontalVisualObstacleAvoidanceEnableStatus(& horizontalVisualObstacleAvoidanceStatus);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Getting horizontal visual obstacle avoidance failed, error code: 0x%08X", returnCode);
+	}
+	USER_LOG_INFO("Current horizontal visual obstacle avoidance status is %d",
+	              horizontalVisualObstacleAvoidanceStatus);
+
+	/*! Turn on horizontal radar avoid enable */
+	USER_LOG_INFO("Turning on horizontal radar obstacle avoidance");
+	DjiTest_WidgetLogAppend("Turning on horizontal radar obstacle avoidance");
+	if (baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M300_RTK ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30 ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30T ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M350_RTK)
+	{
+		returnCode = DjiFlightController_SetHorizontalRadarObstacleAvoidanceEnableStatus(DJI_FLIGHT_CONTROLLER_ENABLE_OBSTACLE_AVOIDANCE);
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Turning on horizontal radar obstacle avoidance failed, error code: 0x%08X", returnCode);
+		};
+	}
+
+	USER_LOG_INFO("Getting horizontal radar obstacle avoidance status");
+	DjiTest_WidgetLogAppend("Getting horizontal radar obstacle avoidance status");
+	if (baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M300_RTK ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30 ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30T ||
+	        baseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M350_RTK)
+	{
+		returnCode = DjiFlightController_GetHorizontalRadarObstacleAvoidanceEnableStatus( & horizontalRadarObstacleAvoidanceStatus );
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Get horizontal radar obstacle avoidance failed, error code: 0x%08X", returnCode);
+		}
+	}
+	/*! Turn on upwards vision avoid enable */
+	USER_LOG_INFO("Turning on upwards visual obstacle avoidance.");
+	DjiTest_WidgetLogAppend("Turning on upwards visual obstacle avoidance.");
+	returnCode = DjiFlightController_SetUpwardsVisualObstacleAvoidanceEnableStatus(
+	                 DJI_FLIGHT_CONTROLLER_ENABLE_OBSTACLE_AVOIDANCE);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Turning on upwards visual obstacle avoidance failed, error code: 0x%08X", returnCode);
+	};
+
+	USER_LOG_INFO("Getting upwards visual obstacle avoidance status");
+	DjiTest_WidgetLogAppend("Getting upwards visual obstacle avoidance status");
+	returnCode = DjiFlightController_GetUpwardsVisualObstacleAvoidanceEnableStatus(
+	                 &upwardsVisualObstacleAvoidanceStatus);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Getting upwards visual obstacle avoidance failed, error code: 0x%08X", returnCode);
+	}
+	USER_LOG_INFO("Current upwards visual obstacle avoidance status is %d", upwardsVisualObstacleAvoidanceStatus);
+
+	/*! Turn on upwards radar avoid enable */
+	USER_LOG_INFO("Turning on upwards radar obstacle avoidance.");
+	DjiTest_WidgetLogAppend("Turning on upwards radar obstacle avoidance.");
+	if (aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M300_RTK ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30 ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30T ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M350_RTK)
+	{
+		returnCode = DjiFlightController_SetUpwardsRadarObstacleAvoidanceEnableStatus(
+		                 DJI_FLIGHT_CONTROLLER_ENABLE_OBSTACLE_AVOIDANCE);
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Turn on upwards radar obstacle avoidance failed, error code: 0x%08X", returnCode);
+		}
+	}
+
+	USER_LOG_INFO("Getting upwards radar obstacle avoidance status");
+	DjiTest_WidgetLogAppend("Getting upwards radar obstacle avoidance status");
+	if (aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M300_RTK ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30 ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M30T ||
+	        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M350_RTK)
+	{
+		returnCode = DjiFlightController_GetUpwardsRadarObstacleAvoidanceEnableStatus(
+		                 &upwardsRadarObstacleAvoidanceStatus);
+		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Getting upwards radar obstacle avoidance failed, error code: 0x%08X", returnCode);
+		}
+	}
+
+	// local variables
+	bool previous_autonomous_control = autonomous_control;
+	while( running )
+	{
+		// obtain or release joystick authority based on the value of autonomous_control
+		if( autonomous_control )
+		{
+			if( ! previous_autonomous_control )
+			{
+				cout << "enabling autonomous control!" << endl;
+				USER_LOG_INFO("Obtaining joystick control authority.");
+				DjiTest_WidgetLogAppend("Obtaining joystick control authority.");
+				returnCode = DjiFlightController_ObtainJoystickCtrlAuthority();
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					USER_LOG_ERROR("Obtaining joystick authority failed, error code: 0x%08X", returnCode);
+				}
+			}
+		}
+		else
+		{
+			if( previous_autonomous_control )
+			{
+				cout << "disabling autonomous control!" << endl;
+				USER_LOG_INFO("Releasing joystick authority");
+				DjiTest_WidgetLogAppend("Releasing joystick authority");
+				returnCode = DjiFlightController_ReleaseJoystickCtrlAuthority();
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					USER_LOG_ERROR("Releasing joystick authority failed, error code: 0x%08X", returnCode);
+				}
+			}
+		}
+
+		// track variables
+		previous_autonomous_control = autonomous_control;
+
+		std::chrono::milliseconds sleep_duration(100);
+		std::this_thread::sleep_for(sleep_duration);
+	}
+
+	USER_LOG_INFO("Leaving flight_control_thread.");
 }
 
 void* gimbal_control_function(void* args)
 {
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-    T_DjiReturnCode returnCode;
-    T_DjiAircraftInfoBaseInfo baseInfo;
-    E_DjiAircraftSeries aircraftSeries;
-    T_DjiGimbalManagerRotation rotation;
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	T_DjiReturnCode returnCode;
+	T_DjiGimbalManagerRotation rotation;
 
-    uint8_t smooth_factor = 255;
-//    double speed_factor_yaw   = 2.75;
-//    double speed_factor_pitch = 2.60;
-//    double speed_factor_yaw     = 3;
-//    double speed_factor_pitch   = 2.75;
-    double speed_factor_yaw     = 1;
-    double speed_factor_pitch   = 1;
-//    double speed_factor_yaw   = 120;
-//    double speed_factor_pitch = speed_factor_yaw * 3 / 4; // 4:3 aspect ratio
-    double zoom_factor_scalar = 0.1;
+	// instantiate speed PID controllers
+	PID pid_u_s = PID(0.1, 100, -100, 150, 30, 1.0);
+	PID pid_v_s = PID(0.1, 100, -100, 150, 30, 1.0);
 
-    returnCode = DjiAircraftInfo_GetBaseInfo(&baseInfo);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-    {
-        USER_LOG_ERROR("Failed to get aircraft base info, return code 0x%08X", returnCode);
-        return nullptr;
-    }
+	// instantiate angle PID controllers
+	PID pid_u_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+	PID pid_v_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
 
-    //PID::PID( double dt, double max, double min, double Kp, double Kd, double Ki )
-    // for angles
-//    PID pid_u = PID(0.1, 10, -10, 2.5, 0.2, 0);
-//    PID pid_v = PID(0.1, 10, -10, 1.5, 0.1, 0);
-    PID pid_u_s = PID(0.1, 100, -100, 150, 30, 1.0);
-    PID pid_v_s = PID(0.1, 100, -100, 150, 30, 1.0);
-    
-    PID pid_u_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
-    PID pid_v_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+	USER_LOG_INFO("Starting gimbal_control_thread.");
 
-//    PID pid_u = PID(2.5, 0.00001, 0.0, 1);
-//    pid_u.set_set_point(0);
-//    pid_u.printParameters();
-    
-//    PID pid_v = PID(2.5, 0.75, 0.01, 10);
-//    pid_v.set_set_point(0);
-//    pid_v.printParameters();
-
-    aircraftSeries = baseInfo.aircraftSeries;
-
-    USER_LOG_INFO("Gimbal manager sample start");
-    DjiTest_WidgetLogAppend("Gimbal manager sample start");
-
-    // initialize
-//    USER_LOG_INFO("--> Step 1: Init gimbal manager module");
-//    DjiTest_WidgetLogAppend("--> Step 1: Init gimbal manager module");
-    returnCode = DjiGimbalManager_Init();
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-    {
-        USER_LOG_ERROR("Init gimbal manager failed, error code: 0x%08X", returnCode);
-        return nullptr;
-    }
-
-    // set gimbal mode
-    if (gimbal_mode == DJI_GIMBAL_MODE_FREE)
-    {
-        USER_LOG_INFO("--> Step 2: Set gimbal to free mode");
-        DjiTest_WidgetLogAppend("--> Step 2: Set gimbal to free mode");
-    }
-    else if (gimbal_mode == DJI_GIMBAL_MODE_YAW_FOLLOW)
-    {
-        USER_LOG_INFO("--> Step 2: Set gimbal to yaw follow mode");
-        DjiTest_WidgetLogAppend("--> Step 2: Set gimbal to yaw follow mode");
-    }
-    returnCode = DjiGimbalManager_SetMode(gimbal_mount_position, gimbal_mode);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-    {
-        USER_LOG_ERROR("Set gimbal mode failed, error code: 0x%08X", returnCode);
-        return nullptr;
-    }
-
-    // reset gimbal angles
-//    USER_LOG_INFO("--> Step 3: Reset gimbal angles.\r\n");
-    returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-    {
-        USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
-    }
-    
-// typedef struct {
-//     E_DjiGimbalRotationMode rotationMode; /*!< Rotation gimbal mode. */
-//     dji_f32_t pitch; /*!< Pitch angle in degree, unit: deg */
-//     dji_f32_t roll; /*!< Roll angle in degree, unit: deg */
-//     dji_f32_t yaw; /*!< Yaw angle in degree, unit: deg */
-//     dji_f64_t time; /*!< Expect execution time of gimbal rotation, unit: second. */
-// } T_DjiGimbalManagerRotation;
-
-//    bool aim_gimbal = s_widgetValueList[aim_gimbal_index];
-    bool old_aim_gimbal = aim_gimbal;
-    while( running )
-    {
-	auto now = std::chrono::high_resolution_clock::now();
-	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
-//	cout << "time since apriltag detection:" << duration.count() << endl;
-
-	double u,v;
-	if( duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
+	// initialize
+	returnCode = DjiGimbalManager_Init();
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
-		apriltag_detection_mutex.lock();
-		u = apriltag_detection.c[0];
-		v = apriltag_detection.c[1];
-		apriltag_detection_mutex.unlock();
-		u_n = (u - global_image_half_width)  / global_image_half_width;
-		v_n = (v - global_image_half_height) / global_image_half_height;
-
-		if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
-		{
-			theta_u = u_n * atan( SENSOR_WIDTH_WIDE  / (2 * FOCAL_LENGTH_WIDE ) );
-			theta_v = v_n * atan( SENSOR_HEIGHT_WIDE / (2 * FOCAL_LENGTH_WIDE ) );
-		}
-		else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
-		{
-			theta_u = u_n * atan( SENSOR_WIDTH_WIDE   / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
-			theta_v = v_n * atan( SENSOR_HEIGHT_WIDE  / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
-		}
-		else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
-		{
-			theta_u = u_n * atan( SENSOR_WIDTH_ZOOM  / (2 * FOCAL_LENGTH_ZOOM ) );
-			theta_v = v_n * atan( SENSOR_HEIGHT_ZOOM / (2 * FOCAL_LENGTH_ZOOM ) );
-		}
-
-//		cout << "( " << theta_u << " , " << theta_v << " )" << endl;
-		
-		if( aim_gimbal )
-		{
-			T_DjiGimbalManagerRotation rotation;
-			
-			double actuation_u_a = 0;
-			double actuation_v_a = 0;
-			double actuation_u_s = 0;
-			double actuation_v_s = 0;
-			
-			actuation_u_a = pid_u_a.calculate(0, theta_u);
-			actuation_v_a = pid_v_a.calculate(0, theta_v);
-			actuation_u_s = pid_u_s.calculate(0, theta_u);
-			actuation_v_s = pid_v_s.calculate(0, theta_v);
-
-
-//			actuation_u = pid_u.output( theta_u );
-//			actuation_v = pid_v.output( theta_v );
-
-			cout << "actuation: " << actuation_u_a << " , " << actuation_v_a << endl;
-
-#if ENABLE_PID_SWITCHING
-			if( abs(actuation_u_a) > 0.11 || abs(actuation_v_a) > 0.11 )
-			{
-#endif
-				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
-				rotation.pitch =  1.0 * actuation_v_a;
-				rotation.roll  =  0.0;
-				rotation.yaw   =  -1.0 * actuation_u_a;
-				rotation.time  = 2.0;
-
-				cout << "angle actuation" << endl;
-#if ENABLE_PID_SWITCHING				
-			}
-			else
-			{
-				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
-				rotation.pitch =  1.0 * actuation_v_s;
-				rotation.roll  =  0.0;
-				rotation.yaw   =  -1.0 * actuation_u_s;
-				rotation.time  = 0.1;
-
-				cout << "speed actuation" << endl;
-			}
-#endif
-
-//			T_DjiGimbalManagerRotation rotation;
-////			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE; 
-//			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
-//			rotation.pitch =  1.0 * actuation_v;
-//			rotation.roll  =  0.0;
-//			rotation.yaw   =  -1.0 * actuation_u;
-//			rotation.time  = 0.1;
-
-//			T_DjiGimbalManagerRotation rotation;
-//			rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED; 
-//			rotation.pitch =  actuation_v;
-//			rotation.roll  =  0.0;
-//			rotation.yaw   =  actuation_u;
-//			rotation.time  = 0.1;
-		      
-			returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
-			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-			{
-				cerr << "error moving the gimbal!" << endl;
-			}
-		}
+		USER_LOG_ERROR("Init gimbal manager failed, error code: 0x%08X", returnCode);
+		return nullptr;
 	}
 
-	std::chrono::milliseconds sleep_duration(10);
-	std::this_thread::sleep_for(sleep_duration);
-    }
+	// set gimbal mode
+	if (gimbal_mode == DJI_GIMBAL_MODE_FREE)
+	{
+		USER_LOG_INFO("Setting gimbal to free mode");
+	}
+	else if (gimbal_mode == DJI_GIMBAL_MODE_YAW_FOLLOW)
+	{
+		USER_LOG_INFO("Setting gimbal to yaw follow mode");
+	}
+	returnCode = DjiGimbalManager_SetMode(gimbal_mount_position, gimbal_mode);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Set gimbal mode failed, error code: 0x%08X", returnCode);
+		return nullptr;
+	}
 
-    cout << "reseting gimbal angles" << endl;
-    USER_LOG_INFO("--> Step 3: Reset gimbal angles.\r\n");
-    returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-    {
-        USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
-    }
-    cout << "exiting gimbal control thread" << endl;
+	// reset gimbal angles
+	returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
+	}
+
+	/*
+		typedef struct {
+		    E_DjiGimbalRotationMode rotationMode;	// Gimbal rotation mode
+		    dji_f32_t pitch;				// Pitch angle in degree, unit: deg
+		    dji_f32_t roll;				// Roll angle in degree, unit: deg
+		    dji_f32_t yaw;				// Yaw angle in degree, unit: deg
+		    dji_f64_t time;				// Expected execution time of gimbal rotation, unit: second.
+		} T_DjiGimbalManagerRotation;
+	*/
+
+	bool old_aim_gimbal = aim_gimbal; // to track for edges
+
+	while( running )
+	{
+		auto now = std::chrono::high_resolution_clock::now();
+		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
+
+		double u,v;
+		if( duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
+		{
+			apriltag_detection_mutex.lock();
+			u = apriltag_detection.c[0];
+			v = apriltag_detection.c[1];
+			apriltag_detection_mutex.unlock();
+			u_n = (u - global_image_half_width)  / global_image_half_width;
+			v_n = (v - global_image_half_height) / global_image_half_height;
+
+			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
+			{
+				theta_u = u_n * atan( SENSOR_WIDTH_WIDE  / (2 * FOCAL_LENGTH_WIDE ) );
+				theta_v = v_n * atan( SENSOR_HEIGHT_WIDE / (2 * FOCAL_LENGTH_WIDE ) );
+			}
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			{
+				theta_u = u_n * atan( SENSOR_WIDTH_WIDE   / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
+				theta_v = v_n * atan( SENSOR_HEIGHT_WIDE  / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
+			}
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			{
+				theta_u = u_n * atan( SENSOR_WIDTH_ZOOM  / (2 * FOCAL_LENGTH_ZOOM ) );
+				theta_v = v_n * atan( SENSOR_HEIGHT_ZOOM / (2 * FOCAL_LENGTH_ZOOM ) );
+			}
+
+			if( aim_gimbal )
+			{
+				T_DjiGimbalManagerRotation rotation;
+
+				double actuation_u_a = 0;
+				double actuation_v_a = 0;
+				double actuation_u_s = 0;
+				double actuation_v_s = 0;
+
+				actuation_u_a = pid_u_a.calculate(0, theta_u);
+				actuation_v_a = pid_v_a.calculate(0, theta_v);
+				actuation_u_s = pid_u_s.calculate(0, theta_u);
+				actuation_v_s = pid_v_s.calculate(0, theta_v);
+#if ENABLE_PID_SWITCHING
+				if( abs(actuation_u_a) > 0.11 || abs(actuation_v_a) > 0.11 )
+				{
+#endif
+					rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+					rotation.pitch =  1.0 * actuation_v_a;
+					rotation.roll  =  0.0;
+					rotation.yaw   =  -1.0 * actuation_u_a;
+					rotation.time  = 2.0;
+#if ENABLE_PID_SWITCHING
+				}
+				else
+				{
+					rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED;
+					rotation.pitch =  1.0 * actuation_v_s;
+					rotation.roll  =  0.0;
+					rotation.yaw   =  -1.0 * actuation_u_s;
+					rotation.time  = 0.1;
+				}
+#endif
+				returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					cerr << "error moving the gimbal!" << endl;
+				}
+			}
+		}
+
+		std::chrono::milliseconds sleep_duration(10);
+		std::this_thread::sleep_for(sleep_duration);
+	}
+
+	USER_LOG_INFO("Resetting gimbal angles.");
+	returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
+	}
+	USER_LOG_INFO("Leaving gimbal_control_thread.");
 }
 
 static uint8_t DjiTest_CameraManagerGetCameraTypeIndex(E_DjiCameraType cameraType)
 {
-    uint8_t i;
+	uint8_t i;
 
-    for (i = 0; i < sizeof(s_cameraTypeStrList) / sizeof(s_cameraTypeStrList[0]); i++) {
-        if (s_cameraTypeStrList[i].cameraType == cameraType) {
-            return i;
-        }
-    }
+	for (i = 0; i < sizeof(s_cameraTypeStrList) / sizeof(s_cameraTypeStrList[0]); i++)
+	{
+		if (s_cameraTypeStrList[i].cameraType == cameraType)
+		{
+			return i;
+		}
+	}
 
-    return 0;
+	return 0;
 }
 
 void* camera_management_function(void* args)
 {
-	cout << "entering camera management thread" << endl;
+	USER_LOG_INFO("Entering camera_management_thread");
 
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-    T_DjiReturnCode returnCode;
-    E_DjiCameraType cameraType;
-    T_DjiCameraManagerFirmwareVersion firmwareVersion;
-    T_DjiCameraManagerFocusPosData focusPosData;
-    T_DjiCameraManagerTapZoomPosData tapZoomPosData;
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	T_DjiReturnCode returnCode;
+	E_DjiCameraType cameraType;
+	T_DjiCameraManagerFirmwareVersion firmwareVersion;
+	T_DjiCameraManagerFocusPosData focusPosData;
+	T_DjiCameraManagerTapZoomPosData tapZoomPosData;
 
-    E_DjiMountPosition mountPosition = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
-		
-    std::chrono::milliseconds initial_sleep_duration(500);
-    std::this_thread::sleep_for(initial_sleep_duration);
+	E_DjiMountPosition mountPosition = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
 
-    USER_LOG_INFO("--> Step 1: Init camera manager module");
-    returnCode = DjiCameraManager_Init();
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Init camera manager failed, error code: 0x%08X\r\n", returnCode);
-	return nullptr;
-    }
+	osalHandler->TaskSleepMs(500);
 
-    std::this_thread::sleep_for(initial_sleep_duration);
-    
-    USER_LOG_INFO("--> Step 2: Get camera type and version");
-    returnCode = DjiCameraManager_GetCameraType(mountPosition, &cameraType);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Get mounted position %d camera's type failed, error code: 0x%08X\r\n",
-                       mountPosition, returnCode);
-	return nullptr;
-    }
-    USER_LOG_INFO("Mounted position %d camera's type is %s",
-                  mountPosition,
-                  s_cameraTypeStrList[DjiTest_CameraManagerGetCameraTypeIndex(cameraType)].cameraTypeStr);
+	USER_LOG_INFO("Initializing camera manager module.");
+	returnCode = DjiCameraManager_Init();
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Init camera manager failed, error code: 0x%08X\r\n", returnCode);
+		return nullptr;
+	}
 
-    returnCode = DjiCameraManager_GetFirmwareVersion(mountPosition, &firmwareVersion);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
-        USER_LOG_ERROR("Get mounted position %d camera's firmware version failed, error code: 0x%08X\r\n",
-                       mountPosition, returnCode);
-	return nullptr;
-    }
-    USER_LOG_INFO("Mounted position %d camera's firmware is V%02d.%02d.%02d.%02d\r\n", mountPosition,
-                  firmwareVersion.firmware_version[0], firmwareVersion.firmware_version[1],
-                  firmwareVersion.firmware_version[2], firmwareVersion.firmware_version[3]);
+	osalHandler->TaskSleepMs(500);
 
-    dji_f32_t default_zoom_factor = 2;
-    USER_LOG_INFO("Set mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
-    returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-        USER_LOG_INFO("Set mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
-                      mountPosition, default_zoom_factor, returnCode);
-    }
+	USER_LOG_INFO("Getting camera type and version.");
+	returnCode = DjiCameraManager_GetCameraType(mountPosition, &cameraType);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Getting mounted position %d camera's type failed, error code: 0x%08X\r\n",
+		               mountPosition, returnCode);
+		return nullptr;
+	}
+	USER_LOG_INFO("Mounted position %d camera's type is %s",
+	              mountPosition,
+	              s_cameraTypeStrList[DjiTest_CameraManagerGetCameraTypeIndex(cameraType)].cameraTypeStr);
 
-    returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-	returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-	USER_LOG_ERROR("Set mounted position %d camera's focus mode(%d) failed,"
-		       " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
-		       returnCode);
-    }
+	returnCode = DjiCameraManager_GetFirmwareVersion(mountPosition, &firmwareVersion);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Getting mounted position %d camera's firmware version failed, error code: 0x%08X\r\n",
+		               mountPosition, returnCode);
+		return nullptr;
+	}
+	USER_LOG_INFO("Mounted position %d camera's firmware is V%02d.%02d.%02d.%02d\r\n", mountPosition,
+	              firmwareVersion.firmware_version[0], firmwareVersion.firmware_version[1],
+	              firmwareVersion.firmware_version[2], firmwareVersion.firmware_version[3]);
+
+	dji_f32_t default_zoom_factor = 2;
+	USER_LOG_INFO("Setting mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
+	returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+	{
+		USER_LOG_INFO("Setting mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
+		              mountPosition, default_zoom_factor, returnCode);
+	}
+
+	returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+	{
+		USER_LOG_ERROR("Setting mounted position %d camera's focus mode(%d) failed,"
+		               " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
+		               returnCode);
+	}
 
 //		    T_DjiCameraManagerFocusPosData focus_point;
 //		    focus_point.focusX = apriltag_detection.c[0];
@@ -833,17 +1038,15 @@ void* camera_management_function(void* args)
 //    DJI_CAMERA_MANAGER_SOURCE_IR_CAM = 0x3,
 //    DJI_CAMERA_MANAGER_SOURCE_VISIBLE_CAM = 0x7,
 //} E_DjiCameraManagerStreamSource;
-	
-	std::chrono::milliseconds sleep_duration(200);
+
+	osalHandler->TaskSleepMs(500);
 	while( running )
 	{
 		intended_stream_source_mutex.lock();
-		// cout << "Switching stream sources from " << current_stream_source << " to " << intended_stream_source << "..." << endl;
 		returnCode = DjiCameraManager_SetStreamSource(mountPosition, intended_stream_source);
-		// cout << "returnCode: " << returnCode << endl;
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 		{
-			cout << "failed setting the stream source..." << endl;
+			USER_LOG_ERROR("Failed to set the stream source!");
 		}
 		else
 		{
@@ -856,7 +1059,7 @@ void* camera_management_function(void* args)
 		returnCode = DjiCameraManager_GetOpticalZoomParam(mountPosition, &opticalZoomParam);
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 		{
-			USER_LOG_ERROR("Get mounted position %d camera's zoom param failed, error code :0x%08X", mountPosition, returnCode);
+			USER_LOG_ERROR("Getting mounted position %d camera's zoom param failed, error code :0x%08X", mountPosition, returnCode);
 		}
 
 //typedef enum {
@@ -881,16 +1084,15 @@ void* camera_management_function(void* args)
 			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 			{
 				// if the landing pad is too small
-				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.02 )
+				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.015 )
 				{
-					USER_LOG_INFO("landing pad too small");
-					USER_LOG_INFO("zooming in...");
 					// zoom in
-					returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_MODERATELY_SLOW);
+					USER_LOG_INFO("Landing pad too small - zooming in...");
+					returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_SLOW);
 					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 					{
-						USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-							       " error code :0x%08X.", mountPosition, returnCode);
+						USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
+						               " error code :0x%08X.", mountPosition, returnCode);
 					}
 				}
 				// else if the landing pad is too big
@@ -901,28 +1103,30 @@ void* camera_management_function(void* args)
 					{
 						USER_LOG_INFO("zooming out...");
 						// zoom out
-						returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_MODERATELY_SLOW);
+						returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_SLOW);
 						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 						{
-							USER_LOG_ERROR("Mounted position %d camera start continuous zoom  failed,"
-								       " error code :0x%08X.", mountPosition, returnCode);
+							USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
+							               " error code :0x%08X.", mountPosition, returnCode);
 						}
 					}
 					else
 					{
-						USER_LOG_INFO("trying to switch to wide angle camera...");
+						USER_LOG_INFO("Trying to switch to wide angle camera...");
 						intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
 					}
 				}
-				else if( apriltag_detection_area != 0 ) // if the landing pad is an ok size
+				// if the landing pad is an ok size
+				else if( apriltag_detection_area != 0 )
 				{
-					USER_LOG_INFO("landing pad ok size");
+					USER_LOG_INFO("Landing pad ok size - keeping zoom level constant.");
 
 					returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
 					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-					    returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-					    USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-						       " error code :0x%08X", mountPosition, returnCode);
+					        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					{
+						USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+						               " error code :0x%08X", mountPosition, returnCode);
 					}
 				}
 			}
@@ -935,101 +1139,86 @@ void* camera_management_function(void* args)
 				}
 			}
 		}
-		else // if the landing pad detection has timed out
+		else     // if the landing pad detection has timed out
 		{
 			// stop any continuous zooming
 			returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
 			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-			    returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-			    USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-			    	       " error code :0x%08X", mountPosition, returnCode);
+			        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+			{
+				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+				               " error code :0x%08X", mountPosition, returnCode);
 			}
 		}
-//		USER_LOG_INFO("Current zoom factor(%0.1f)", opticalZoomParam.currentOpticalZoomFactor);
-		std::this_thread::sleep_for(sleep_duration);
+		osalHandler->TaskSleepMs(100);
 	}
-    
-    returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-	returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-	USER_LOG_ERROR("Set mounted position %d camera's focus mode(%d) failed,"
-		       " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
-		       returnCode);
-    }
 
-    USER_LOG_INFO("Set mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
-    returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
-    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-        USER_LOG_INFO("Set mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
-                      mountPosition, default_zoom_factor, returnCode);
-    }
+	returnCode = DjiCameraManager_SetFocusMode(mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+	{
+		USER_LOG_ERROR("Setting mounted position %d camera's focus mode(%d) failed,"
+		               " error code :0x%08X.", mountPosition, DJI_CAMERA_MANAGER_FOCUS_MODE_AUTO,
+		               returnCode);
+	}
 
-	cout << "exiting camera management thread" << endl;
+	USER_LOG_INFO("Setting mounted position %d camera's zoom factor: %0.1f x.", mountPosition, default_zoom_factor);
+	returnCode = DjiCameraManager_SetOpticalZoomParam(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, default_zoom_factor);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+	        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+	{
+		USER_LOG_INFO("Setting mounted position %d camera's zoom factor(%0.1f) failed, error code :0x%08X",
+		              mountPosition, default_zoom_factor, returnCode);
+	}
+
+	USER_LOG_INFO("Exiting camera_management_thread.");
 }
 
 /* Exported functions definition ---------------------------------------------*/
 int main(int argc, char **argv)
 {
-    signal(SIGINT, sigint_handler);
+	signal(SIGINT, graceful_exit);
+	signal(SIGTERM, graceful_exit);
 
-    Application application(argc, argv);
-    char inputChar;
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-    T_DjiReturnCode returnCode;
-    T_DjiTestApplyHighPowerHandler applyHighPowerHandler;
+	Application application(argc, argv);
+	char inputChar;
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	T_DjiReturnCode returnCode;
+	T_DjiTestApplyHighPowerHandler applyHighPowerHandler;
 
-    initialize();
+	initialize();
 
-    while(running)
-    {
-//	    cout << "main loop" << endl;
-//	    fcu_subscription_mutex.lock();
-//	    cout << "gimbal PRY: "
-//		 << gimbal_angles.x
-//		 << " , "
-//		 << gimbal_angles.y
-//		 << " , "
-//		 << gimbal_angles.z
-//		 << endl;
-//	    fcu_subscription_mutex.unlock();
-//
-//	    cout << "aim gimbal: " << aim_gimbal << endl;
-//	    cout << "autonomous control: " << autonomous_control << endl;
+	while(running)
+	{
+		std::chrono::milliseconds sleep_duration(100);
+		std::this_thread::sleep_for(sleep_duration);
+	}
 
-	    std::chrono::milliseconds sleep_duration(100);
-	    std::this_thread::sleep_for(sleep_duration);
-    }
+	deinitialize();
 
-    deinitialize();
-
-    exit(0);
+	exit(0);
 }
 
 static void apriltag_image_callback(CameraRGBImage img, void *userData)
 {
-	apriltag_detection_area =0 ;
-//    auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-//    cout << "Joshua received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
+	apriltag_detection_area = 0; // 0 -> no detection
 
-	string name = string(reinterpret_cast<char *>(userData));
-
+	// hold the image in a OpenCV matrix, convert fromt RGB to BGR
 	Mat mat(img.height, img.width, CV_8UC3, img.rawData.data(), img.width * 3);
-
-        cvtColor(mat, mat, COLOR_RGB2BGR);
+	cvtColor(mat, mat, COLOR_RGB2BGR);
 
 	// ***************************************************************************
 	if( nullptr == tf )
 	{
-	    tf = tagCustom48h12_create();
-	    td = apriltag_detector_create();
-	    apriltag_detector_add_family(td, tf);
+		tf = tagCustom48h12_create();
+		td = apriltag_detector_create();
+		apriltag_detector_add_family(td, tf);
 
-	    td->quad_decimate = 2;
-	    td->quad_sigma    = 0;
-	    td->nthreads      = 4;
-	    td->debug         = false;
-	    td->refine_edges  = false;
+		td->quad_decimate = 2;
+		td->quad_sigma    = 0;
+		td->nthreads      = 4;
+		td->debug         = false;
+		td->refine_edges  = false;
 	}
 
 	if( global_image_half_width == 0 || global_image_half_height == 0 )
@@ -1040,27 +1229,24 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 
 	cv::Mat gray;
 	cvtColor(mat, gray, COLOR_BGR2GRAY);
-	
+
 	// we have to handle IR images differently
 	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 	{
 		cv::bitwise_not(gray, gray);
 	}
-	
+
 	image_u8_t im = { .width = gray.cols,
-            .height = gray.rows,
-            .stride = gray.cols,
-            .buf = gray.data
-        };
+	                  .height = gray.rows,
+	                  .stride = gray.cols,
+	                  .buf = gray.data
+	                };
 
 	zarray_t *detections = apriltag_detector_detect(td, &im);
 
-//	cout << "tags detected: " << zarray_size(detections) << endl;
-
-//	cout << "tags: ( ";
 	// get the minimum ID in the detections:
 	int maximum_id = -1;
-        for (int i = 0; i < zarray_size(detections); i++)
+	for (int i = 0; i < zarray_size(detections); i++)
 	{
 		apriltag_detection_t* det;
 		zarray_get(detections, i, &det);
@@ -1071,22 +1257,9 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 			apriltag_detection = *det;
 			apriltag_detection_timestamp = std::chrono::system_clock::now();
 			apriltag_detection_mutex.unlock();
-
-			
-
-//			// get area of april tag quadrilateral
-//			for (i = 0; i < 4; i++)
-//			{
-//			    int j = (i + 1) % 4; // Calculate the next index (wraps around to 0 for the last point)
-//			    apriltag_detection_area += det->p[i][0] * det->p[j][1] - det->p[j][0] * det->p[i][1];
-//			}
-//			apriltag_detection_area = 0.5 * fabs(apriltag_detection_area);
-//			apriltag_detection_area /= (img.width * img.height);
 		}
-//		cout << "( " << det->c[0] << " , " << det->c[1] << " )" << endl;
-//		cout << det->id << " ";
 	}
-	
+
 	double x1 = apriltag_detection.p[0][0];
 	double y1 = apriltag_detection.p[0][1];
 	double x2 = apriltag_detection.p[1][0];
@@ -1107,48 +1280,45 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 		apriltag_detection_area = 0.75*area + 0.25*apriltag_detection_area;
 	}
 
-//	cout << ") id: " << apriltag_detection.id << ", area: " << apriltag_detection_area << endl;
-
 #if VISUALIZE
-        // Draw detection outlines
-        for (int i = 0; i < zarray_size(detections); i++) {
-            apriltag_detection_t *det;
-            zarray_get(detections, i, &det);
-            line(mat, Point(det->p[0][0], det->p[0][1]),
-                     Point(det->p[1][0], det->p[1][1]),
-                     Scalar(0, 0xff, 0), 2);
-            line(mat, Point(det->p[0][0], det->p[0][1]),
-                     Point(det->p[3][0], det->p[3][1]),
-                     Scalar(0, 0, 0xff), 2);
-            line(mat, Point(det->p[1][0], det->p[1][1]),
-                     Point(det->p[2][0], det->p[2][1]),
-                     Scalar(0xff, 0, 0), 2);
-            line(mat, Point(det->p[2][0], det->p[2][1]),
-                     Point(det->p[3][0], det->p[3][1]),
-                     Scalar(0xff, 0, 0), 2);
+	// Draw detection outlines
+	for (int i = 0; i < zarray_size(detections); i++)
+	{
+		apriltag_detection_t *det;
+		zarray_get(detections, i, &det);
+		line(mat, Point(det->p[0][0], det->p[0][1]),
+		     Point(det->p[1][0], det->p[1][1]),
+		     Scalar(0, 0xff, 0), 2);
+		line(mat, Point(det->p[0][0], det->p[0][1]),
+		     Point(det->p[3][0], det->p[3][1]),
+		     Scalar(0, 0, 0xff), 2);
+		line(mat, Point(det->p[1][0], det->p[1][1]),
+		     Point(det->p[2][0], det->p[2][1]),
+		     Scalar(0xff, 0, 0), 2);
+		line(mat, Point(det->p[2][0], det->p[2][1]),
+		     Point(det->p[3][0], det->p[3][1]),
+		     Scalar(0xff, 0, 0), 2);
 
-            stringstream ss;
-            ss << det->id;
-            String text = ss.str();
-            int fontface = FONT_HERSHEY_SCRIPT_SIMPLEX;
-            double fontscale = 1.0;
-            int baseline;
-            Size textsize = getTextSize(text, fontface, fontscale, 2,
-                                            &baseline);
-            putText(mat, text, Point(det->c[0]-textsize.width/2,
-                                       det->c[1]+textsize.height/2),
-                    fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
+		stringstream ss;
+		ss << det->id;
+		String text = ss.str();
+		int fontface = FONT_HERSHEY_SCRIPT_SIMPLEX;
+		double fontscale = 1.0;
+		int baseline;
+		Size textsize = getTextSize(text, fontface, fontscale, 2,
+		                            &baseline);
+		putText(mat, text, Point(det->c[0]-textsize.width/2,
+		                         det->c[1]+textsize.height/2),
+		        fontface, fontscale, Scalar(0xff, 0x99, 0), 2);
 
-        }
+	}
 #endif
-        apriltag_detections_destroy(detections);	
+	apriltag_detections_destroy(detections);
 	// ***************************************************************************
 
-//    auto time = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
-//    cout << time << endl;
-
 #if VISUALIZE
-        imshow(name, mat);
+	string window_name = string(reinterpret_cast<char *>(userData));
+	imshow(window_name, mat);
 	cv::waitKey(1);
 #endif
 }
@@ -1157,13 +1327,13 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 /* Private functions definition-----------------------------------------------*/
 static T_DjiReturnCode DjiTest_HighPowerApplyPinInit()
 {
-    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 static T_DjiReturnCode DjiTest_WriteHighPowerApplyPin(E_DjiPowerManagementPinState pinState)
 {
-    //attention: please pull up the HWPR pin state by hardware.
-    return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+	//attention: please pull up the HWPR pin state by hardware.
+	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
 /****************** (C) COPYRIGHT DJI Innovations *****END OF FILE****/
