@@ -22,10 +22,17 @@
  *********************************************************************
  */
 
+#define GIMBAL_AIM_MODE_ANGLE 0
+#define ZOOM_SCALAR 0.9
+#define MAX_SPEED 50
+#define SPEED_FACTOR 5
+#define RAD_TO_DEG 57.2957795
+#define DEG_TO_RAD  0.0174533
+
 #define MAIN_CAMERA 1
 #define VISUALIZE 0
 #define ENABLE_CAMERA_SWITCHING 1
-#define ENABLE_PID_SWITCHING    1
+#define ENABLE_PID_SWITCHING    0
 
 #define FOCAL_LENGTH_WIDE     4.50
 #define SENSOR_WIDTH_WIDE     6.29
@@ -156,7 +163,8 @@ mutex widget_mutex;
 int32_t aim_gimbal_index = 0;
 bool aim_gimbal = false;
 bool aim_gimbal_default = true;
-int32_t autonomous_control_index = 1;
+int32_t intended_stream_source_index = 1;
+int32_t autonomous_control_index = 2;
 bool autonomous_control = false;
 bool autonomous_control_default = false;
 #define WIDGET_DIR_PATH_LEN_MAX         (256)
@@ -341,6 +349,17 @@ static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, 
 	if( index == aim_gimbal_index )
 	{
 		aim_gimbal = (bool) *value;
+	}
+	else if( index == intended_stream_source_index )
+	{
+		if( (bool)* value )
+		{
+			intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_IR_CAM;
+		}
+		else
+		{
+			intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
+		}
 	}
 	else if( index == autonomous_control_index )
 	{
@@ -792,6 +811,20 @@ void* flight_control_function(void* args)
 	USER_LOG_INFO("Leaving flight_control_thread.");
 }
 
+double constrain(double value, double lower, double upper)
+{
+	double result = value;
+	if(      result < lower )
+	{
+		result = lower;
+	}
+	else if( result > upper )
+	{
+		result = upper;
+	}
+	return result;
+}
+
 void* gimbal_control_function(void* args)
 {
 	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
@@ -799,12 +832,14 @@ void* gimbal_control_function(void* args)
 	T_DjiGimbalManagerRotation rotation;
 
 	// instantiate speed PID controllers
-	PID pid_u_s = PID(0.1, 100, -100, 150, 30, 1.0);
-	PID pid_v_s = PID(0.1, 100, -100, 150, 30, 1.0);
+	PID pid_u_s = PID(0.1, 100, -100, 500, 150, 2.0);
+	PID pid_v_s = PID(0.1, 100, -100, 500, 150, 2.0);
 
 	// instantiate angle PID controllers
-	PID pid_u_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
-	PID pid_v_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+//	PID pid_u_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+//	PID pid_v_a = PID(0.1, 10, -10, 2.5, 0.2, 0);
+	PID pid_u_a = PID(0.1, 2, -2, 5, 1.5, 0.1);
+	PID pid_v_a = PID(0.1, 2, -2, 5, 1.5, 0.1);
 
 	USER_LOG_INFO("Starting gimbal_control_thread.");
 
@@ -830,6 +865,13 @@ void* gimbal_control_function(void* args)
 	{
 		USER_LOG_ERROR("Set gimbal mode failed, error code: 0x%08X", returnCode);
 		return nullptr;
+	}
+            
+	returnCode = DjiGimbalManager_SetControllerSmoothFactor(gimbal_mount_position, DJI_GIMBAL_AXIS_YAW, (uint8_t) 10.0);
+	returnCode = DjiGimbalManager_SetControllerSmoothFactor(gimbal_mount_position, DJI_GIMBAL_AXIS_PITCH, (uint8_t) 10.0);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Failed!");
 	}
 
 	// reset gimbal angles
@@ -857,7 +899,7 @@ void* gimbal_control_function(void* args)
 		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
 
 		double u,v;
-		if( duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
+		if( duration.count() < 100 && global_image_half_width != 0 && global_image_half_height != 0 )
 		{
 			apriltag_detection_mutex.lock();
 			u = apriltag_detection.c[0];
@@ -886,35 +928,32 @@ void* gimbal_control_function(void* args)
 			{
 				T_DjiGimbalManagerRotation rotation;
 
-				double actuation_u_a = 0;
-				double actuation_v_a = 0;
-				double actuation_u_s = 0;
-				double actuation_v_s = 0;
+				theta_u *= RAD_TO_DEG;
+				theta_v *= RAD_TO_DEG;
 
-				actuation_u_a = pid_u_a.calculate(0, theta_u);
-				actuation_v_a = pid_v_a.calculate(0, theta_v);
-				actuation_u_s = pid_u_s.calculate(0, theta_u);
-				actuation_v_s = pid_v_s.calculate(0, theta_v);
-#if ENABLE_PID_SWITCHING
-				if( abs(actuation_u_a) > 0.11 || abs(actuation_v_a) > 0.11 )
-				{
+#if GIMBAL_AIM_MODE_ANGLE
+//				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+//				rotation.pitch =  -1.0 * theta_v;
+//				rotation.roll  =   0.0;
+//				rotation.yaw   =   1.0 * theta_u;
+//				rotation.time  =   0.5;
+#else
+				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED;
+
+				double zoom_factor = ZOOM_SCALAR * opticalZoomParam.currentOpticalZoomFactor / 2;
+				double   yaw_speed =  5 * theta_u * zoom_factor;
+				double pitch_speed = -5 * theta_v * zoom_factor;
+
+				yaw_speed = constrain( yaw_speed, -MAX_SPEED, MAX_SPEED );
+				pitch_speed = constrain( pitch_speed, -MAX_SPEED, MAX_SPEED );
+
+				rotation.pitch =   pitch_speed;
+				rotation.roll  =   0.0;
+				rotation.yaw   =   yaw_speed;
+				rotation.time  =   0.05;
 #endif
-					rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
-					rotation.pitch =  1.0 * actuation_v_a;
-					rotation.roll  =  0.0;
-					rotation.yaw   =  -1.0 * actuation_u_a;
-					rotation.time  = 2.0;
-#if ENABLE_PID_SWITCHING
-				}
-				else
-				{
-					rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED;
-					rotation.pitch =  1.0 * actuation_v_s;
-					rotation.roll  =  0.0;
-					rotation.yaw   =  -1.0 * actuation_u_s;
-					rotation.time  = 0.1;
-				}
-#endif
+				cout << theta_u << " " << theta_v << endl;
+
 				returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
 				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 				{
@@ -923,7 +962,11 @@ void* gimbal_control_function(void* args)
 			}
 		}
 
-		std::chrono::milliseconds sleep_duration(10);
+#if GIMBAL_AIM_MODE_ANGLE
+		std::chrono::milliseconds sleep_duration(500);
+#else
+		std::chrono::milliseconds sleep_duration(100);
+#endif
 		std::this_thread::sleep_for(sleep_duration);
 	}
 
@@ -1018,18 +1061,19 @@ void* camera_management_function(void* args)
 		               returnCode);
 	}
 
-//		    T_DjiCameraManagerFocusPosData focus_point;
-//		    focus_point.focusX = apriltag_detection.c[0];
-//		    focus_point.focusY = apriltag_detection.c[1];
-//		    USER_LOG_INFO("Set mounted position %d camera's focus point to (%0.1f, %0.1f).",
-//				  mountPosition, apriltag_detection.c[0], apriltag_detection.c[1]);
-//		    returnCode = DjiCameraManager_SetFocusTarget(mountPosition, focus_point);
-//		    if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-//			returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
-//			USER_LOG_ERROR("Set mounted position %d camera's focus point(%0.1f, %0.1f) failed,"
-//				       " error code :0x%08X.", mountPosition, focus_point.focusX, focus_point.focusY,
-//				       returnCode);
-//		    }
+//	T_DjiCameraManagerFocusPosData focus_point;
+//	focus_point.focusX = 1920 / 2;
+//	focus_point.focusY = 1440 / 2;
+//	USER_LOG_INFO("Set mounted position %d camera's focus point to (%0.1f, %0.1f).",
+//		  mountPosition, apriltag_detection.c[0], apriltag_detection.c[1]);
+//	returnCode = DjiCameraManager_SetFocusTarget(mountPosition, focus_point);
+//	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+//	    returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND) {
+//	    USER_LOG_ERROR("Set mounted position %d camera's focus point(%0.1f, %0.1f) failed,"
+//		       " error code :0x%08X.", mountPosition, focus_point.focusX, focus_point.focusY,
+//		       returnCode);
+//	}
+
 
 //typedef enum {
 //    DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM = 0x0,

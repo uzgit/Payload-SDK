@@ -24,6 +24,19 @@
       {
         "widget_index": 1,
         "widget_type": "switch",
+        "widget_name": "video_stream_switch",
+        "icon_file_set": {
+          "icon_file_name_selected": "crosshairs_select.png",
+          "icon_file_name_unselected": "crosshairs_unselect.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": true,
+          "mapping_config_display_order": 2
+        }
+      },
+      {
+        "widget_index": 2,
+        "widget_type": "switch",
         "widget_name": "autonomy_switch",
         "icon_file_set": {
           "icon_file_name_selected": "computer_chip_select.png",
@@ -31,7 +44,7 @@
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
-          "mapping_config_display_order": 2
+          "mapping_config_display_order": 3
         }
       },
       {
@@ -44,11 +57,11 @@
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
-          "mapping_config_display_order": 3
+          "mapping_config_display_order": 4
         }
       },
       {
-        "widget_index": 2,
+        "widget_index": 4,
         "widget_type": "switch",
         "widget_name": "takeoff_switch",
         "icon_file_set": {
@@ -57,7 +70,7 @@
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
-          "mapping_config_display_order": 4
+          "mapping_config_display_order": 5
         }
       }
     ]
