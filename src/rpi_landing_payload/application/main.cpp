@@ -23,9 +23,9 @@
  */
 
 #define GIMBAL_AIM_MODE_ANGLE 0
-#define ZOOM_SCALAR 0.9
-#define MAX_SPEED 50
-#define SPEED_FACTOR 5
+#define ZOOM_SCALAR 1
+#define MAX_SPEED 30
+#define SPEED_FACTOR 6
 #define RAD_TO_DEG 57.2957795
 #define DEG_TO_RAD  0.0174533
 
@@ -932,17 +932,17 @@ void* gimbal_control_function(void* args)
 				theta_v *= RAD_TO_DEG;
 
 #if GIMBAL_AIM_MODE_ANGLE
-//				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
-//				rotation.pitch =  -1.0 * theta_v;
-//				rotation.roll  =   0.0;
-//				rotation.yaw   =   1.0 * theta_u;
-//				rotation.time  =   0.5;
+				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+				rotation.pitch =  -1.0 * theta_v;
+				rotation.roll  =   0.0;
+				rotation.yaw   =   1.0 * theta_u;
+				rotation.time  =   0.5;
 #else
 				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED;
 
 				double zoom_factor = ZOOM_SCALAR * opticalZoomParam.currentOpticalZoomFactor / 2;
-				double   yaw_speed =  5 * theta_u * zoom_factor;
-				double pitch_speed = -5 * theta_v * zoom_factor;
+				double   yaw_speed =  SPEED_FACTOR * theta_u * zoom_factor;
+				double pitch_speed = -SPEED_FACTOR * theta_v * zoom_factor;
 
 				yaw_speed = constrain( yaw_speed, -MAX_SPEED, MAX_SPEED );
 				pitch_speed = constrain( pitch_speed, -MAX_SPEED, MAX_SPEED );
