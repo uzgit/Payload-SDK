@@ -25,7 +25,7 @@
 #define GIMBAL_AIM_MODE_ANGLE 0
 #define ZOOM_SCALAR 1
 #define MAX_SPEED 30
-#define SPEED_FACTOR 6
+#define SPEED_FACTOR 5
 #define RAD_TO_DEG 57.2957795
 #define DEG_TO_RAD  0.0174533
 
@@ -40,9 +40,9 @@
 #define FOCAL_LENGTH_ZOOM     6.83 // this is the base focal length -- can be up to 119.94
 #define SENSOR_WIDTH_ZOOM     7.41
 #define SENSOR_HEIGHT_ZOOM    5.56
-#define FOCAL_LENGTH_THERMAL  13.5
-#define SENSOR_WIDTH_THERMAL  7.68
-#define SENSOR_HEIGHT_THERMAL 6.144
+#define FOCAL_LENGTH_IR  13.5
+#define SENSOR_WIDTH_IR  7.68
+#define SENSOR_HEIGHT_IR 6.144
 
 // standard includes
 #include <csignal>
@@ -115,6 +115,7 @@ T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
 T_DjiFcSubscriptionRC rc_status;
 T_DjiDataTimestamp timestamp = {0};
+T_DjiFcSubscriptionControlDevice control_info;
 mutex fcu_subscription_mutex;
 
 pthread_t gimbal_control_thread;
@@ -151,6 +152,8 @@ static const T_DjiTestCameraTypeStr s_cameraTypeStrList[] =
 	{DJI_CAMERA_TYPE_M3E,     "M3E Camera"},
 	{DJI_CAMERA_TYPE_M3T,     "M3T Camera"},
 };
+
+bool intended_stream_rgb = true;
 E_DjiCameraManagerStreamSource current_stream_source = DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM;
 E_DjiCameraManagerStreamSource intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
 mutex current_stream_source_mutex;
@@ -163,8 +166,12 @@ mutex widget_mutex;
 int32_t aim_gimbal_index = 0;
 bool aim_gimbal = false;
 bool aim_gimbal_default = true;
-int32_t intended_stream_source_index = 1;
+int32_t intended_stream_rgb_index = 1;
 int32_t autonomous_control_index = 2;
+int32_t automatic_landing_index = 3;
+bool automatic_landing = false;
+int32_t automatic_takeoff_index = 4;
+bool automatic_takeoff = false;
 bool autonomous_control = false;
 bool autonomous_control_default = false;
 #define WIDGET_DIR_PATH_LEN_MAX         (256)
@@ -179,7 +186,7 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] =
 	{1, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{2, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
-//    {3, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{4, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {4, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {5, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {6, DJI_WIDGET_TYPE_INT_INPUT_BOX, DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
@@ -350,20 +357,28 @@ static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, 
 	{
 		aim_gimbal = (bool) *value;
 	}
-	else if( index == intended_stream_source_index )
+	else if( index == intended_stream_rgb_index )
 	{
 		if( (bool)* value )
 		{
-			intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_IR_CAM;
+			intended_stream_rgb = false;
 		}
 		else
 		{
-			intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
+			intended_stream_rgb = true;
 		}
 	}
 	else if( index == autonomous_control_index )
 	{
 		autonomous_control = (bool) *value;
+	}
+	else if( index == automatic_landing_index )
+	{
+		automatic_landing = (bool) *value;
+	}
+	else if( index == automatic_takeoff_index )
+	{
+		automatic_takeoff = (bool) *value;
 	}
 
 	widget_mutex.unlock();
@@ -533,6 +548,8 @@ void initialize_widget()
 
 void* subscription_thread_function(void* args)
 {
+	T_DjiFcSubscriptionQuaternion quaternion = {0};
+
 	USER_LOG_INFO("Starting data retrival thread.");
 
 	// initialize fcu subscription
@@ -541,8 +558,6 @@ void* subscription_thread_function(void* args)
 	{
 		USER_LOG_ERROR("Error initializing data subscription module error.");
 	}
-
-	T_DjiFcSubscriptionQuaternion quaternion = {0};
 
 	// subscribe to the gimbal angles topic
 	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GIMBAL_ANGLES, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
@@ -563,6 +578,13 @@ void* subscription_thread_function(void* args)
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
 		USER_LOG_ERROR("Error subscribing to the quaternion topic!");
+	}
+
+//	_CONTROL_DEVICE
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the control device topic!");
 	}
 
 	while(running)
@@ -595,6 +617,16 @@ void* subscription_thread_function(void* args)
 		{
 			USER_LOG_ERROR("Error getting the quaternion topic!");
 		}
+
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
+		          (uint8_t *) &control_info,
+		          sizeof(T_DjiFcSubscriptionControlDevice),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the control device topic!");
+		}
+
 		fcu_subscription_mutex.unlock();
 		// ***********************************************************************************************
 
@@ -632,6 +664,12 @@ void* subscription_thread_function(void* args)
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
 		USER_LOG_ERROR("Error unsubscribing from the quaternion topic!");
+	}
+
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the control device topic!");
 	}
 
 	USER_LOG_INFO("Ending data retrieval thread.");
@@ -777,12 +815,28 @@ void* flight_control_function(void* args)
 			if( ! previous_autonomous_control )
 			{
 				cout << "enabling autonomous control!" << endl;
+
+				T_DjiFlightControllerJoystickMode joystickMode =
+				{
+					DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+					DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+					DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+					DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+					DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+				};
+
+				DjiFlightController_SetJoystickMode(joystickMode);
+
 				USER_LOG_INFO("Obtaining joystick control authority.");
 				DjiTest_WidgetLogAppend("Obtaining joystick control authority.");
 				returnCode = DjiFlightController_ObtainJoystickCtrlAuthority();
 				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 				{
 					USER_LOG_ERROR("Obtaining joystick authority failed, error code: 0x%08X", returnCode);
+				}
+				else
+				{
+					USER_LOG_INFO("Obtained joystick control authority.");
 				}
 			}
 		}
@@ -798,14 +852,76 @@ void* flight_control_function(void* args)
 				{
 					USER_LOG_ERROR("Releasing joystick authority failed, error code: 0x%08X", returnCode);
 				}
+				else
+				{
+					USER_LOG_INFO("Released joystick authority");
+				}
 			}
 		}
 
 		// track variables
 		previous_autonomous_control = autonomous_control;
 
-		std::chrono::milliseconds sleep_duration(100);
+		// implement control
+		if( autonomous_control )
+		{
+			double forward     = 0;
+			double right       = 0;
+			double up          = 0;
+			double yaw_rate_cw = 0;
+
+			cout << "Controlling joysticks with FRUY = {"
+			     << forward
+			     << ", "
+			     << right
+			     << ", "
+			     << up
+			     << ", "
+			     << yaw_rate_cw
+			     << "}"
+			     << endl;
+
+			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
+			DjiFlightController_ExecuteJoystickAction(joystickCommand);
+		}
+
+		if( automatic_landing )
+		{
+			cout << "automatic landing!" << endl;
+			automatic_landing = false;
+//			djiStat = DjiFlightController_StartLanding();
+//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//			{
+//				USER_LOG_ERROR("Start landing failed, error code: 0x%08X", djiStat);
+//			}
+//			else
+//			{
+//				USER_LOG_INFO("Started landing!");
+//			}
+			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_landing_index, false, nullptr);
+		}
+
+		if( automatic_takeoff )
+		{
+			cout << "automatic takeoff!" << endl;
+			automatic_takeoff = false;
+//			djiStat = DjiFlightController_StartTakeoff();
+//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//			{
+//				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
+//			}
+//			else
+//			{
+//				USER_LOG_INFO("Started takeoff!");
+//			}
+			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_takeoff_index, false, nullptr);
+		}
+
+		// loop sleep (20 Hz)
+		std::chrono::milliseconds sleep_duration(50);
 		std::this_thread::sleep_for(sleep_duration);
+
+
 	}
 
 	USER_LOG_INFO("Leaving flight_control_thread.");
@@ -866,8 +982,8 @@ void* gimbal_control_function(void* args)
 		USER_LOG_ERROR("Set gimbal mode failed, error code: 0x%08X", returnCode);
 		return nullptr;
 	}
-            
-	returnCode = DjiGimbalManager_SetControllerSmoothFactor(gimbal_mount_position, DJI_GIMBAL_AXIS_YAW, (uint8_t) 10.0);
+
+	returnCode = DjiGimbalManager_SetControllerSmoothFactor(gimbal_mount_position, DJI_GIMBAL_AXIS_YAW,   (uint8_t) 10.0);
 	returnCode = DjiGimbalManager_SetControllerSmoothFactor(gimbal_mount_position, DJI_GIMBAL_AXIS_PITCH, (uint8_t) 10.0);
 	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
@@ -918,10 +1034,14 @@ void* gimbal_control_function(void* args)
 				theta_u = u_n * atan( SENSOR_WIDTH_WIDE   / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
 				theta_v = v_n * atan( SENSOR_HEIGHT_WIDE  / ( opticalZoomParam.currentOpticalZoomFactor * 2 * FOCAL_LENGTH_WIDE ) );
 			}
-			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 			{
-				theta_u = u_n * atan( SENSOR_WIDTH_ZOOM  / (2 * FOCAL_LENGTH_ZOOM ) );
-				theta_v = v_n * atan( SENSOR_HEIGHT_ZOOM / (2 * FOCAL_LENGTH_ZOOM ) );
+				theta_u = u_n * atan( SENSOR_WIDTH_ZOOM  / (2 * FOCAL_LENGTH_IR ) );
+				theta_v = v_n * atan( SENSOR_HEIGHT_ZOOM / (2 * FOCAL_LENGTH_IR ) );
+			}
+			else
+			{
+				USER_LOG_ERROR("Stream source error in gimbal aim function!");
 			}
 
 			if( aim_gimbal )
@@ -1086,6 +1206,24 @@ void* camera_management_function(void* args)
 	osalHandler->TaskSleepMs(500);
 	while( running )
 	{
+		// switch between RGB and IR
+		if( intended_stream_rgb )
+		{
+			if( intended_stream_source != DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM
+			        && intended_stream_source != DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			{
+				intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
+			}
+		}
+		else
+		{
+			if( intended_stream_source != DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+			{
+				intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_IR_CAM;
+			}
+		}
+
+		// switch stream sources if necessary
 		intended_stream_source_mutex.lock();
 		returnCode = DjiCameraManager_SetStreamSource(mountPosition, intended_stream_source);
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
@@ -1100,6 +1238,7 @@ void* camera_management_function(void* args)
 		}
 		intended_stream_source_mutex.unlock();
 
+		// get zoom factor of zoom camera
 		returnCode = DjiCameraManager_GetOpticalZoomParam(mountPosition, &opticalZoomParam);
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 		{
@@ -1125,6 +1264,7 @@ void* camera_management_function(void* args)
 		// if the april tag detection is young enough to be considered a valid recognition of the landing pad
 		if( aim_gimbal && duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
 		{
+
 			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 			{
 				// if the landing pad is too small
@@ -1234,7 +1374,13 @@ int main(int argc, char **argv)
 
 	while(running)
 	{
-		std::chrono::milliseconds sleep_duration(100);
+		cout << "control mode:  " << control_info.controlMode  << endl;
+		cout << "device status: " << control_info.deviceStatus << endl;
+		cout << "flight status: " << control_info.flightStatus << endl;
+		cout << "vrc status:    " << control_info.vrcStatus    << endl;
+		cout << "reserved:      " << control_info.reserved     << endl;
+
+		std::chrono::milliseconds sleep_duration(1000);
 		std::this_thread::sleep_for(sleep_duration);
 	}
 
