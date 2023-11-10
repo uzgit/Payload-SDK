@@ -162,6 +162,7 @@ T_DjiCameraManagerOpticalZoomParam opticalZoomParam;
 
 // widget variables
 //pthread_t widget_poll_thread;
+int32_t stop_switch_index = 5;
 mutex widget_mutex;
 int32_t aim_gimbal_index = 0;
 bool aim_gimbal = false;
@@ -187,6 +188,7 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] =
 	{2, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{4, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{5, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {4, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {5, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {6, DJI_WIDGET_TYPE_INT_INPUT_BOX, DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
@@ -379,6 +381,13 @@ static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, 
 	else if( index == automatic_takeoff_index )
 	{
 		automatic_takeoff = (bool) *value;
+	}
+	else if( index == stop_switch_index )
+	{
+		if( *value )
+		{
+			running = false;
+		}
 	}
 
 	widget_mutex.unlock();
@@ -581,7 +590,7 @@ void* subscription_thread_function(void* args)
 	}
 
 //	_CONTROL_DEVICE
-	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE, DJI_DATA_SUBSCRIPTION_TOPIC_10_HZ, NULL);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
 		USER_LOG_ERROR("Error subscribing to the control device topic!");
@@ -635,13 +644,13 @@ void* subscription_thread_function(void* args)
 		                                2 * ((double) quaternion.q2 * quaternion.q2 + (double) quaternion.q3 * quaternion.q3));
 		aircraft_yaw = aircraftYawInRad * 180 / DJI_PI;
 
-		if( autonomous_control && (abs(rc_status.pitch) > 1000 || abs(rc_status.roll) > 1000 || abs(rc_status.yaw) > 1000 || abs(rc_status.throttle) > 1000) )
-		{
-			autonomous_control = false;
-			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, autonomous_control_index, (int32_t)autonomous_control, nullptr);
-
-			USER_LOG_INFO("Disabling autonomous control because of manual stick input!");
-		}
+//		if( autonomous_control && (abs(rc_status.pitch) > 1000 || abs(rc_status.roll) > 1000 || abs(rc_status.yaw) > 1000 || abs(rc_status.throttle) > 1000) )
+//		{
+//			autonomous_control = false;
+//			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, autonomous_control_index, (int32_t)autonomous_control, nullptr);
+//
+//			USER_LOG_INFO("Disabling autonomous control because of manual stick input!");
+//		}
 
 		std::chrono::milliseconds sleep_duration(20);
 		std::this_thread::sleep_for(sleep_duration);
@@ -676,6 +685,112 @@ void* subscription_thread_function(void* args)
 	return nullptr;
 }
 
+static T_DjiReturnCode
+DjiUser_FlightCtrlJoystickCtrlAuthSwitchEventCb(T_DjiFlightControllerJoystickCtrlAuthorityEventInfo eventData)
+{
+	switch (eventData.joystickCtrlAuthoritySwitchEvent)
+	{
+	case DJI_FLIGHT_CONTROLLER_MSDK_GET_JOYSTICK_CTRL_AUTH_EVENT:
+	{
+		if (eventData.curJoystickCtrlAuthority == DJI_FLIGHT_CONTROLLER_JOYSTICK_CTRL_AUTHORITY_MSDK)
+		{
+			USER_LOG_INFO("[Event] Msdk request to obtain joystick ctrl authority\r\n");
+		}
+		else
+		{
+			USER_LOG_INFO("[Event] Msdk request to release joystick ctrl authority\r\n");
+		}
+		break;
+	}
+	case DJI_FLIGHT_CONTROLLER_INTERNAL_GET_JOYSTICK_CTRL_AUTH_EVENT:
+	{
+		if (eventData.curJoystickCtrlAuthority == DJI_FLIGHT_CONTROLLER_JOYSTICK_CTRL_AUTHORITY_INTERNAL)
+		{
+			USER_LOG_INFO("[Event] Internal request to obtain joystick ctrl authority\r\n");
+		}
+		else
+		{
+			USER_LOG_INFO("[Event] Internal request to release joystick ctrl authority\r\n");
+		}
+		break;
+	}
+	case DJI_FLIGHT_CONTROLLER_OSDK_GET_JOYSTICK_CTRL_AUTH_EVENT:
+	{
+		if (eventData.curJoystickCtrlAuthority == DJI_FLIGHT_CONTROLLER_JOYSTICK_CTRL_AUTHORITY_OSDK)
+		{
+			USER_LOG_INFO("[Event] Request to obtain joystick ctrl authority\r\n");
+		}
+		else
+		{
+			USER_LOG_INFO("[Event] Request to release joystick ctrl authority\r\n");
+		}
+		break;
+	}
+	case DJI_FLIGHT_CONTROLLER_RC_LOST_GET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to rc lost\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_RC_NOT_P_MODE_RESET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc for rc is not in P mode\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_RC_SWITCH_MODE_GET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to rc switching mode\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_RC_PAUSE_GET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to rc pausing\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_RC_REQUEST_GO_HOME_GET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to rc request for return\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_LOW_BATTERY_GO_HOME_RESET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc for low battery return\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_LOW_BATTERY_LANDING_RESET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc for low battery land\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_OSDK_LOST_GET_JOYSTICK_CTRL_AUTH_EVENT:
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to sdk lost\r\n");
+		break;
+	case DJI_FLIGHT_CONTROLLER_NERA_FLIGHT_BOUNDARY_RESET_JOYSTICK_CTRL_AUTH_EVENT :
+		USER_LOG_INFO("[Event] Current joystick ctrl authority is reset to rc due to near boundary\r\n");
+		break;
+	default:
+		USER_LOG_INFO("[Event] Unknown joystick ctrl authority event\r\n");
+	}
+
+	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
+}
+
+void DjiTest_FlightControlVelocityAndYawRateCtrl(const T_DjiTestFlightControlVector3f offsetDesired, float yawRate,
+                                                 uint32_t timeMs)
+{
+    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+    uint32_t originTime = 0;
+    uint32_t currentTime = 0;
+    uint32_t elapsedTimeInMs = 0;
+    osalHandler->GetTimeMs(&originTime);
+    osalHandler->GetTimeMs(&currentTime);
+    elapsedTimeInMs = currentTime - originTime;
+    T_DjiFlightControllerJoystickMode joystickMode = {
+        DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+        DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+//	DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
+        DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+    };
+
+    DjiFlightController_SetJoystickMode(joystickMode);
+    T_DjiFlightControllerJoystickCommand joystickCommand = {offsetDesired.x, offsetDesired.y, offsetDesired.z,
+                                                            yawRate};
+
+    while (elapsedTimeInMs <= timeMs) {
+        DjiFlightController_ExecuteJoystickAction(joystickCommand);
+        osalHandler->TaskSleepMs(2);
+        osalHandler->GetTimeMs(&currentTime);
+        elapsedTimeInMs = currentTime - originTime;
+    }
+}
+
 void* flight_control_function(void* args)
 {
 	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
@@ -700,6 +815,15 @@ void* flight_control_function(void* args)
 	{
 		USER_LOG_ERROR("Initializing flight controller module failed, error code:0x%08llX", returnCode);
 		return nullptr;
+	}
+	USER_LOG_INFO("Initialized flight controller module.");
+
+	returnCode = DjiFlightController_RegJoystickCtrlAuthorityEventCallback(
+	                 DjiUser_FlightCtrlJoystickCtrlAuthSwitchEventCb);
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_NONSUPPORT)
+	{
+		USER_LOG_ERROR("Register joystick control authority event callback failed, errno = 0x%08llX", returnCode);
+		return NULL;
 	}
 
 	returnCode = DjiAircraftInfo_GetBaseInfo(&aircraftInfoBaseInfo);
@@ -805,6 +929,7 @@ void* flight_control_function(void* args)
 		}
 	}
 
+
 	// local variables
 	bool previous_autonomous_control = autonomous_control;
 	while( running )
@@ -816,16 +941,15 @@ void* flight_control_function(void* args)
 			{
 				cout << "enabling autonomous control!" << endl;
 
-				T_DjiFlightControllerJoystickMode joystickMode =
-				{
-					DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
-					DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
-					DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
-					DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
-					DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
-				};
+//				T_DjiFlightControllerJoystickMode joystickMode =
+//				{
+//					DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+//					DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+//					DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+//					DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+//					DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+//				};
 
-				DjiFlightController_SetJoystickMode(joystickMode);
 
 				USER_LOG_INFO("Obtaining joystick control authority.");
 				DjiTest_WidgetLogAppend("Obtaining joystick control authority.");
@@ -838,6 +962,7 @@ void* flight_control_function(void* args)
 				{
 					USER_LOG_INFO("Obtained joystick control authority.");
 				}
+//				DjiFlightController_SetJoystickMode(joystickMode);
 			}
 		}
 		else
@@ -865,10 +990,10 @@ void* flight_control_function(void* args)
 		// implement control
 		if( autonomous_control )
 		{
-			double forward     = 0;
-			double right       = 0;
-			double up          = 0;
-			double yaw_rate_cw = 0;
+			double forward     =   0.0;
+			double right       =   0.0;
+			double up          =   0.0;
+			double yaw_rate_cw =  20.0;
 
 			cout << "Controlling joysticks with FRUY = {"
 			     << forward
@@ -881,23 +1006,38 @@ void* flight_control_function(void* args)
 			     << "}"
 			     << endl;
 
-			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
-			DjiFlightController_ExecuteJoystickAction(joystickCommand);
+//			T_DjiFlightControllerJoystickMode joystickMode =
+//			{
+//				DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+//				DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+//				DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+//				DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+////				DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
+//				DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+//			};
+//			DjiFlightController_SetJoystickMode(joystickMode);
+//			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
+//			DjiFlightController_ExecuteJoystickAction(joystickCommand);
+			
+//			DjiTest_FlightControlVelocityAndYawRateCtrl((T_DjiTestFlightControlVector3f) {0.0, 0.0, 0.0}, 20, 2000);
+			DjiTest_FlightControlVelocityAndYawRateCtrl((T_DjiTestFlightControlVector3f) {forward, right, up}, yaw_rate_cw, 200);
+//			osalHandler->TaskSleepMs(2);
+
 		}
 
 		if( automatic_landing )
 		{
 			cout << "automatic landing!" << endl;
 			automatic_landing = false;
-//			djiStat = DjiFlightController_StartLanding();
-//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-//			{
-//				USER_LOG_ERROR("Start landing failed, error code: 0x%08X", djiStat);
-//			}
-//			else
-//			{
-//				USER_LOG_INFO("Started landing!");
-//			}
+			djiStat = DjiFlightController_StartLanding();
+			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+			{
+				USER_LOG_ERROR("Start landing failed, error code: 0x%08X", djiStat);
+			}
+			else
+			{
+				USER_LOG_INFO("Started landing!");
+			}
 			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_landing_index, false, nullptr);
 		}
 
@@ -905,23 +1045,21 @@ void* flight_control_function(void* args)
 		{
 			cout << "automatic takeoff!" << endl;
 			automatic_takeoff = false;
-//			djiStat = DjiFlightController_StartTakeoff();
-//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-//			{
-//				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
-//			}
-//			else
-//			{
-//				USER_LOG_INFO("Started takeoff!");
-//			}
+			djiStat = DjiFlightController_StartTakeoff();
+			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+			{
+				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
+			}
+			else
+			{
+				USER_LOG_INFO("Started takeoff!");
+			}
 			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_takeoff_index, false, nullptr);
 		}
 
 		// loop sleep (20 Hz)
 		std::chrono::milliseconds sleep_duration(50);
 		std::this_thread::sleep_for(sleep_duration);
-
-
 	}
 
 	USER_LOG_INFO("Leaving flight_control_thread.");
@@ -1374,11 +1512,11 @@ int main(int argc, char **argv)
 
 	while(running)
 	{
-		cout << "control mode:  " << control_info.controlMode  << endl;
-		cout << "device status: " << control_info.deviceStatus << endl;
-		cout << "flight status: " << control_info.flightStatus << endl;
-		cout << "vrc status:    " << control_info.vrcStatus    << endl;
-		cout << "reserved:      " << control_info.reserved     << endl;
+//		cout << "control mode:  " << control_info.controlMode  << endl;
+//		cout << "device status: " << control_info.deviceStatus << endl;
+//		cout << "flight status: " << control_info.flightStatus << endl;
+//		cout << "vrc status:    " << control_info.vrcStatus    << endl;
+//		cout << "reserved:      " << control_info.reserved     << endl;
 
 		std::chrono::milliseconds sleep_duration(1000);
 		std::this_thread::sleep_for(sleep_duration);
