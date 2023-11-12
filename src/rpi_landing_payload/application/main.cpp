@@ -115,7 +115,6 @@ T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
 T_DjiFcSubscriptionRC rc_status;
 T_DjiDataTimestamp timestamp = {0};
-T_DjiFcSubscriptionControlDevice control_info;
 mutex fcu_subscription_mutex;
 
 pthread_t gimbal_control_thread;
@@ -627,16 +626,51 @@ void* subscription_thread_function(void* args)
 			USER_LOG_ERROR("Error getting the quaternion topic!");
 		}
 
+		T_DjiFcSubscriptionControlDevice controlDevice;
+
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
-		          (uint8_t *) &control_info,
+		          (uint8_t *) &controlDevice,
 		          sizeof(T_DjiFcSubscriptionControlDevice),
 		          &timestamp);
+
 		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 		{
-			USER_LOG_ERROR("Error getting the control device topic!");
+			USER_LOG_ERROR("Get value of topic quaternion error, error code: 0x%08X", djiStat);
 		}
+		else
+		{
+			USER_LOG_DEBUG("Timestamp: millisecond %u microsecond %u.", timestamp.millisecond,
+			               timestamp.microsecond);
+		}
+//		cout << "control mode:  " << controlDevice.controlMode  << endl;
+//		cout << "device status: " << controlDevice.deviceStatus << endl;
+//		cout << "flight status: " << controlDevice.flightStatus << endl;
+//		cout << "vrc status:    " << controlDevice.vrcStatus    << endl;
+//		cout << "reserved:      " << controlDevice.reserved     << endl;
+
+//		T_DjiFcSubscriptionControlDevice control_info;
+//		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_CONTROL_DEVICE,
+//		          (uint8_t *) &control_info,
+//		          sizeof(T_DjiFcSubscriptionControlDevice),
+//		          &timestamp);
+//		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//		{
+//			cout << "error getting the control device topic" << endl;
+//			USER_LOG_ERROR("Error getting the control device topic!");
+//		}
+//		else
+//		{
+//			cout << "no error getting the control device topic" << endl;
+//		}
 
 		fcu_subscription_mutex.unlock();
+
+//		cout << "control mode:  " << control_info.controlMode  << endl;
+//		cout << "device status: " << control_info.deviceStatus << endl;
+//		cout << "flight status: " << control_info.flightStatus << endl;
+//		cout << "vrc status:    " << control_info.vrcStatus    << endl;
+//		cout << "reserved:      " << control_info.reserved     << endl;
+
 		// ***********************************************************************************************
 
 		double aircraftYawInRad = atan2(2 * ((double) quaternion.q0 * quaternion.q3 + (double) quaternion.q1 * quaternion.q2),
@@ -760,35 +794,35 @@ DjiUser_FlightCtrlJoystickCtrlAuthSwitchEventCb(T_DjiFlightControllerJoystickCtr
 	return DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS;
 }
 
-void DjiTest_FlightControlVelocityAndYawRateCtrl(const T_DjiTestFlightControlVector3f offsetDesired, float yawRate,
-                                                 uint32_t timeMs)
+void DjiTest_FlightControlVelocityAndYawRateCtrl(const T_DjiTestFlightControlVector3f offsetDesired, float yawRate, uint32_t timeMs)
 {
-    T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
-    uint32_t originTime = 0;
-    uint32_t currentTime = 0;
-    uint32_t elapsedTimeInMs = 0;
-    osalHandler->GetTimeMs(&originTime);
-    osalHandler->GetTimeMs(&currentTime);
-    elapsedTimeInMs = currentTime - originTime;
-    T_DjiFlightControllerJoystickMode joystickMode = {
-        DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
-        DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
-//	DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
-        DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
-    };
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+	uint32_t originTime = 0;
+	uint32_t currentTime = 0;
+	uint32_t elapsedTimeInMs = 0;
+	osalHandler->GetTimeMs(&originTime);
+	osalHandler->GetTimeMs(&currentTime);
+	elapsedTimeInMs = currentTime - originTime;
+	T_DjiFlightControllerJoystickMode joystickMode =
+	{
+		DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+		DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+		DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+		DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+//		DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
+		DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+	};
 
-    DjiFlightController_SetJoystickMode(joystickMode);
-    T_DjiFlightControllerJoystickCommand joystickCommand = {offsetDesired.x, offsetDesired.y, offsetDesired.z,
-                                                            yawRate};
+	DjiFlightController_SetJoystickMode(joystickMode);
+	T_DjiFlightControllerJoystickCommand joystickCommand = {offsetDesired.x, offsetDesired.y, offsetDesired.z, yawRate};
 
-    while (elapsedTimeInMs <= timeMs) {
-        DjiFlightController_ExecuteJoystickAction(joystickCommand);
-        osalHandler->TaskSleepMs(2);
-        osalHandler->GetTimeMs(&currentTime);
-        elapsedTimeInMs = currentTime - originTime;
-    }
+	while (elapsedTimeInMs <= timeMs)
+	{
+		DjiFlightController_ExecuteJoystickAction(joystickCommand);
+		osalHandler->TaskSleepMs(2);
+		osalHandler->GetTimeMs(&currentTime);
+		elapsedTimeInMs = currentTime - originTime;
+	}
 }
 
 void* flight_control_function(void* args)
@@ -806,9 +840,12 @@ void* flight_control_function(void* args)
 	T_DjiAircraftInfoBaseInfo aircraftInfoBaseInfo;
 
 	T_DjiFlightControllerRidInfo ridInfo = {0};
-	ridInfo.latitude = 22.542812;
-	ridInfo.longitude = 113.958902;
-	ridInfo.altitude = 10;
+//	ridInfo.latitude = 22.542812;
+//	ridInfo.longitude = 113.958902;
+//	ridInfo.altitude = 10;
+	ridInfo.latitude  =  64.035921;
+	ridInfo.longitude = -21.943566;
+	ridInfo.altitude  =  10;
 
 	returnCode = DjiFlightController_Init(ridInfo);
 	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
@@ -816,7 +853,10 @@ void* flight_control_function(void* args)
 		USER_LOG_ERROR("Initializing flight controller module failed, error code:0x%08llX", returnCode);
 		return nullptr;
 	}
-	USER_LOG_INFO("Initialized flight controller module.");
+	else
+	{
+		USER_LOG_INFO("Initialized flight controller module.");
+	}
 
 	returnCode = DjiFlightController_RegJoystickCtrlAuthorityEventCallback(
 	                 DjiUser_FlightCtrlJoystickCtrlAuthSwitchEventCb);
@@ -990,10 +1030,10 @@ void* flight_control_function(void* args)
 		// implement control
 		if( autonomous_control )
 		{
-			double forward     =   0.0;
-			double right       =   0.0;
-			double up          =   0.0;
-			double yaw_rate_cw =  20.0;
+			double forward     =   0.0; // positive is forward
+			double right       =   0.0; // positive is right
+			double up          =   0.0; // positive is up
+			double yaw_rate_cw =   0.0; // positive is cw
 
 			cout << "Controlling joysticks with FRUY = {"
 			     << forward
@@ -1006,21 +1046,21 @@ void* flight_control_function(void* args)
 			     << "}"
 			     << endl;
 
-//			T_DjiFlightControllerJoystickMode joystickMode =
-//			{
-//				DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
-//				DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
-//				DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
-//				DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
-////				DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
-//				DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
-//			};
-//			DjiFlightController_SetJoystickMode(joystickMode);
-//			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
-//			DjiFlightController_ExecuteJoystickAction(joystickCommand);
-			
+			T_DjiFlightControllerJoystickMode joystickMode =
+			{
+				DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
+				DJI_FLIGHT_CONTROLLER_VERTICAL_VELOCITY_CONTROL_MODE,
+				DJI_FLIGHT_CONTROLLER_YAW_ANGLE_RATE_CONTROL_MODE,
+				DJI_FLIGHT_CONTROLLER_HORIZONTAL_BODY_COORDINATE,
+//				DJI_FLIGHT_CONTROLLER_HORIZONTAL_GROUND_COORDINATE,
+				DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
+			};
+			DjiFlightController_SetJoystickMode(joystickMode);
+			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
+			DjiFlightController_ExecuteJoystickAction(joystickCommand);
+
 //			DjiTest_FlightControlVelocityAndYawRateCtrl((T_DjiTestFlightControlVector3f) {0.0, 0.0, 0.0}, 20, 2000);
-			DjiTest_FlightControlVelocityAndYawRateCtrl((T_DjiTestFlightControlVector3f) {forward, right, up}, yaw_rate_cw, 200);
+//			DjiTest_FlightControlVelocityAndYawRateCtrl((T_DjiTestFlightControlVector3f){forward, right, up}, yaw_rate_cw, 200);
 //			osalHandler->TaskSleepMs(2);
 
 		}
@@ -1060,6 +1100,16 @@ void* flight_control_function(void* args)
 		// loop sleep (20 Hz)
 		std::chrono::milliseconds sleep_duration(50);
 		std::this_thread::sleep_for(sleep_duration);
+	}
+	
+	returnCode = DjiFlightController_DeInit();
+	if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("De-initializing flight controller module failed, error code:0x%08llX", returnCode);
+	}
+	else
+	{
+		USER_LOG_INFO("De-initialized flight controller module.");
 	}
 
 	USER_LOG_INFO("Leaving flight_control_thread.");
@@ -1512,12 +1562,6 @@ int main(int argc, char **argv)
 
 	while(running)
 	{
-//		cout << "control mode:  " << control_info.controlMode  << endl;
-//		cout << "device status: " << control_info.deviceStatus << endl;
-//		cout << "flight status: " << control_info.flightStatus << endl;
-//		cout << "vrc status:    " << control_info.vrcStatus    << endl;
-//		cout << "reserved:      " << control_info.reserved     << endl;
-
 		std::chrono::milliseconds sleep_duration(1000);
 		std::this_thread::sleep_for(sleep_duration);
 	}
