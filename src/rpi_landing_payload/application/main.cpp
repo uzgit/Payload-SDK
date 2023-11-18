@@ -120,6 +120,7 @@ T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
 T_DjiFcSubscriptionRC rc_status;
 T_DjiDataTimestamp timestamp = {0};
+double aircraft_yaw;
 double gimbal_relative_yaw;
 double gimbal_tilt;
 mutex fcu_subscription_mutex;
@@ -131,6 +132,7 @@ mutex apriltag_detection_mutex;
 double u_n, v_n;
 uint64_t landing_pad_detection_time;
 double theta_u, theta_v; // relative to the camera
+double landing_pad_yaw;  // relative to the drone
 double landing_pad_pan;  // relative to the drone
 double landing_pad_tilt; // relative to the drone
 apriltag_detection_t apriltag_detection;
@@ -205,6 +207,8 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] =
 };
 static const uint32_t s_widgetHandlerListCount = sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem);
 static int32_t s_widgetValueList[sizeof(s_widgetHandlerList) / sizeof(T_DjiWidgetHandlerListItem)] = {0};
+
+double constrain(double value, double lower, double upper);
 
 pthread_t flight_control_thread;
 
@@ -453,7 +457,7 @@ static void *DjiTest_WidgetTask(void *arg)
 
 #ifndef USER_FIRMWARE_MAJOR_VERSION
 		snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
-		         "Mode: %s\nLP: (%.2f, %.2f)\n", current_mode_name.c_str(), landing_pad_pan, landing_pad_tilt);//, theta_u, theta_v);// u_n, v_n);
+		         "Mode: %s\nAH: %.2f GH: %.2f, GRH: %2.f\nLP: (%.2f, %.2f)\n", current_mode_name.c_str(), aircraft_yaw, gimbal_angles.z, gimbal_relative_yaw, landing_pad_pan, landing_pad_tilt);//, theta_u, theta_v);// u_n, v_n);
 //        snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN, "CPU temp C  : %f ms\n", cpu_temperature());
 #else
 		snprintf(message, DJI_WIDGET_FLOATING_WINDOW_MSG_MAX_LEN,
@@ -554,7 +558,7 @@ void* control_policy_update_function(void* args)
 	{
 		// notify of the most recent landing pad detection
 		apriltag_detection_mutex.lock();
-		control_policy.update_landing_pad_detection(landing_pad_detection_time, theta_u, theta_v);
+		control_policy.update_landing_pad_detection(landing_pad_detection_time, theta_u, theta_v, landing_pad_yaw, landing_pad_pan, landing_pad_tilt);
 		apriltag_detection_mutex.unlock();
 	
 		// change states if applicable
@@ -662,7 +666,7 @@ void* subscription_thread_function(void* args)
 		double aircraftYawInRad = atan2(2 * ((double) quaternion.q0 * quaternion.q3 + (double) quaternion.q1 * quaternion.q2),
 		                                (double) 1 -
 		                                2 * ((double) quaternion.q2 * quaternion.q2 + (double) quaternion.q3 * quaternion.q3));
-		double aircraft_yaw = aircraftYawInRad * 180 / DJI_PI;
+		aircraft_yaw = aircraftYawInRad * 180 / DJI_PI;
 
 		gimbal_tilt = gimbal_angles.x;
 		gimbal_relative_yaw = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
@@ -908,11 +912,22 @@ void* flight_control_function(void* args)
 		// implement control
 		if( autonomous_control )
 		{
+			// local declarations for flight control effort
 			double forward     =   0.0; // positive is forward
 			double right       =   0.0; // positive is right
 			double up          =   0.0; // positive is up
 			double yaw_rate_cw =   0.0; // positive is cw
 
+			// set control efforts using the control policy
+			control_policy.get_flight_control_effort( forward, right, up, yaw_rate_cw );
+
+			// have safe limits on control efforts implemented here at the very end
+			forward     = constrain(forward,      -2.0,   2.0);
+			right       = constrain(right,        -2.0,   2.0);
+			up          = constrain(up,           -2.0,   2.0);
+			yaw_rate_cw = constrain(yaw_rate_cw, -30.0,  30.0);
+
+			// announce the control efforts
 			cout << "Controlling joysticks with FRUY = {"
 			     << forward
 			     << ", "
@@ -924,6 +939,7 @@ void* flight_control_function(void* args)
 			     << "}"
 			     << endl;
 
+			// set the mode to be velocities relative to body coordinates with stable mode enabled
 			T_DjiFlightControllerJoystickMode joystickMode =
 			{
 				DJI_FLIGHT_CONTROLLER_HORIZONTAL_VELOCITY_CONTROL_MODE,
@@ -933,7 +949,11 @@ void* flight_control_function(void* args)
 				DJI_FLIGHT_CONTROLLER_STABLE_CONTROL_MODE_ENABLE,
 			};
 			DjiFlightController_SetJoystickMode(joystickMode);
+
+			// create the joystick command
 			T_DjiFlightControllerJoystickCommand joystickCommand = {forward, right, up, yaw_rate_cw};
+
+			// execute the joystick command
 			DjiFlightController_ExecuteJoystickAction(joystickCommand);
 		}
 
@@ -1006,6 +1026,8 @@ void* gimbal_control_function(void* args)
 	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
 	T_DjiReturnCode returnCode;
 
+	bool gimbal_reset_vertically_down_flag = false;
+
 	// instantiate speed PID controllers
 	PID pid_u_s = PID(0.1, 100, -100, 500, 150, 2.0);
 	PID pid_v_s = PID(0.1, 100, -100, 500, 150, 2.0);
@@ -1065,6 +1087,7 @@ void* gimbal_control_function(void* args)
 
 			if( gimbal_policy == GIMBAL_ACTIVE )
 			{
+				gimbal_reset_vertically_down_flag = false;
 				double gimbal_tilt_control_effort;
 				double gimbal_pan_control_effort;
 				control_policy.get_gimbal_control_effort(gimbal_tilt_control_effort, gimbal_pan_control_effort);
@@ -1115,6 +1138,7 @@ void* gimbal_control_function(void* args)
 			}
 			else if( gimbal_policy == GIMBAL_FORWARD )
 			{
+				gimbal_reset_vertically_down_flag = false;
 				returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
 				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 				{
@@ -1123,25 +1147,42 @@ void* gimbal_control_function(void* args)
 			}
 			else if( gimbal_policy == GIMBAL_DOWN )
 			{
-				T_DjiGimbalManagerRotation rotation;
-				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
-				rotation.roll  =   0.00;
-				rotation.time  =   0.05;	// do not increase this too much because then the rotation command blocks for longer
-				rotation.yaw   =   0.00;
-				rotation.pitch = -90.00;
-
-				returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
-				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				if( abs( gimbal_tilt + 90 ) > 0.1 && ! gimbal_reset_vertically_down_flag )
 				{
-					cerr << "error moving the gimbal!" << endl;
+					gimbal_reset_vertically_down_flag = true;
+
+					cout << "resetting gimbal vertically down" << endl;
+					if( gimbal_tilt >= 0 )
+					{
+						T_DjiGimbalManagerRotation rotation;
+						rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+						rotation.roll  =   0.00;
+						rotation.time  =   0.05;	// do not increase this too much because then the rotation command blocks for longer
+						rotation.yaw   =   0.00;
+						rotation.pitch = -(gimbal_tilt + 10);
+
+						returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
+						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+						{
+							cerr << "error moving the gimbal!" << endl;
+						}
+					}
+
+					returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_DOWNWARD_UPWARD);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+					{
+						USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
+					}
 				}
 			}
 			else if( gimbal_policy == GIMBAL_NO_CHANGE )
 			{
+				gimbal_reset_vertically_down_flag = false;
 				cout << "no gimbal control" << endl;
 			}
 			else
 			{
+				gimbal_reset_vertically_down_flag = false;
 				USER_LOG_ERROR("Unknown gimbal mode!");
 			}
 		}
@@ -1599,6 +1640,10 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 		landing_pad_detection_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 		
 		apriltag_detection_mutex.lock();
+		
+		// CW > 0, CCW < 0
+		landing_pad_yaw = atan2( apriltag_detection.H->data[3], apriltag_detection.H->data[0] ) * RAD_TO_DEG;
+
 		int u = apriltag_detection.c[0];
 		int v = apriltag_detection.c[1];
 		u_n = (u - global_image_half_width)  / global_image_half_width;
