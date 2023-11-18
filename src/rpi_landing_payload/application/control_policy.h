@@ -661,10 +661,14 @@ void ControlPolicy::get_flight_control_effort(double& forward, double& right, do
 			break;
 		case MODE_YAW_ALIGNMENT:
 			yaw_rate_cw = relative_yaw;
-			break;
-		case MODE_HORIZONTAL_ALIGNMENT:
 			forward = 1.0 * cos(theta_tilt * DEG_TO_RAD);
 			right   = 1.0 * sin(theta_pan  * DEG_TO_RAD);
+			break;
+		case MODE_HORIZONTAL_ALIGNMENT:
+//			forward = 1.0 * cos(theta_tilt * DEG_TO_RAD);
+//			right   = 1.0 * sin(theta_pan  * DEG_TO_RAD);
+			forward = -0.1 * theta_v;
+			right   =  0.1 * theta_u;
 			break;
 		default:
 			cout << "no flight control effort rule for mode " << mode_names[current_mode] << endl;
@@ -674,7 +678,7 @@ void ControlPolicy::get_flight_control_effort(double& forward, double& right, do
 	forward = constrain(forward, -0.5,  2.0);
 	right   = constrain(right,   -1.0,  1.0);
 	up      = constrain(up,       1.0, -0.5);
-	yaw_rate_cw = constrain(yaw_rate_cw, -20, 20);
+	yaw_rate_cw = constrain(yaw_rate_cw, -10, 10);
 }
 
 Mode ControlPolicy::get_mode()
