@@ -76,6 +76,19 @@
       {
         "widget_index": 5,
         "widget_type": "switch",
+        "widget_name": "gimbal_alignment_switch",
+        "icon_file_set": {
+          "icon_file_name_selected": "crosshairs_select.png",
+          "icon_file_name_unselected": "crosshairs_unselect.png"
+        },
+        "customize_rc_buttons_config": {
+          "is_enable": true,
+          "mapping_config_display_order": 6
+        }
+      },
+      {
+        "widget_index": 6,
+        "widget_type": "switch",
         "widget_name": "stop_switch",
         "icon_file_set": {
           "icon_file_name_selected": "icon_switch_select.png",
@@ -83,7 +96,7 @@
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
-          "mapping_config_display_order": 6
+          "mapping_config_display_order": 7
         }
       }
     ]

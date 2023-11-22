@@ -56,6 +56,7 @@
 #include "opencv2/highgui/highgui.hpp"
 
 #include <apriltag/apriltag.h>
+#include <apriltag/tagCustom24h10.h>
 #include <apriltag/tagCustom48h12.h>
 #include <apriltag/common/getopt.h>
 
@@ -119,9 +120,12 @@ pthread_t subscription_thread;
 T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
 T_DjiFcSubscriptionRC rc_status;
+T_DjiFcSubscriptionFlightStatus flight_status;
 T_DjiDataTimestamp timestamp = {0};
 double aircraft_yaw;
 double gimbal_relative_yaw;
+bool reset_gimbal_alignment = false;
+double gimbal_heading_offset = 0; // for use in the very common case that the heading of the gimbal camera doesn't agree with that of the drone
 double gimbal_tilt;
 mutex fcu_subscription_mutex;
 
@@ -172,7 +176,8 @@ T_DjiCameraManagerOpticalZoomParam opticalZoomParam;
 
 // widget variables
 //pthread_t widget_poll_thread;
-int32_t stop_switch_index = 5;
+int32_t gimbal_alignment_index = 5;
+int32_t stop_switch_index = 6;
 mutex widget_mutex;
 int32_t aim_gimbal_index = 0;
 bool aim_gimbal = false;
@@ -184,7 +189,7 @@ bool automatic_landing = false;
 int32_t automatic_takeoff_index = 4;
 bool automatic_takeoff = false;
 bool autonomous_control = false;
-bool autonomous_control_default = false;
+bool autonomous_control_default = true;
 #define WIDGET_DIR_PATH_LEN_MAX         (256)
 #define WIDGET_TASK_STACK_SIZE          (2048)
 static T_DjiReturnCode DjiTestWidget_SetWidgetValue(E_DjiWidgetType widgetType, uint32_t index, int32_t value, void *userData);
@@ -199,6 +204,7 @@ static const T_DjiWidgetHandlerListItem s_widgetHandlerList[] =
 	{3, DJI_WIDGET_TYPE_SWITCH,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{4, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 	{5, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
+	{6, DJI_WIDGET_TYPE_SWITCH,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {4, DJI_WIDGET_TYPE_BUTTON,        DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {5, DJI_WIDGET_TYPE_SCALE,         DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
 //    {6, DJI_WIDGET_TYPE_INT_INPUT_BOX, DjiTestWidget_SetWidgetValue, DjiTestWidget_GetWidgetValue, NULL},
@@ -398,6 +404,10 @@ static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, 
 	else if( index == automatic_takeoff_index )
 	{
 		automatic_takeoff = (bool) *value;
+	}
+	else if( index == gimbal_alignment_index )
+	{
+		reset_gimbal_alignment = (bool) *value;
 	}
 	else if( index == stop_switch_index )
 	{
@@ -627,6 +637,13 @@ void* subscription_thread_function(void* args)
 	{
 		USER_LOG_ERROR("Error subscribing to the control device topic!");
 	}
+	
+	// subscribe to the flight status
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the altitude flight status topic!");
+	}
 
 	while(running)
 	{
@@ -653,6 +670,11 @@ void* subscription_thread_function(void* args)
 		{
 			USER_LOG_ERROR("Error getting the rc topic!");
 		}
+    
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT,
+				      (uint8_t *) &flight_status,
+				      sizeof(T_DjiFcSubscriptionFlightStatus),
+				      &timestamp);
 
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
 		          (uint8_t *) &quaternion,
@@ -669,7 +691,8 @@ void* subscription_thread_function(void* args)
 		aircraft_yaw = aircraftYawInRad * 180 / DJI_PI;
 
 		gimbal_tilt = gimbal_angles.x;
-		gimbal_relative_yaw = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
+//		gimbal_relative_yaw = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
+		gimbal_relative_yaw = fmod(gimbal_angles.z - gimbal_heading_offset, 360) - fmod(aircraft_yaw, 360);
 		if( gimbal_relative_yaw >= 180 )
 		{
 			gimbal_relative_yaw -= 360;
@@ -714,6 +737,12 @@ void* subscription_thread_function(void* args)
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
 		USER_LOG_ERROR("Error unsubscribing from the control device topic!");
+	}
+	
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
 	}
 
 	USER_LOG_INFO("Ending data retrieval thread.");
@@ -928,16 +957,16 @@ void* flight_control_function(void* args)
 			yaw_rate_cw = constrain(yaw_rate_cw, -30.0,  30.0);
 
 			// announce the control efforts
-			cout << "Controlling joysticks with FRUY = {"
-			     << forward
-			     << ", "
-			     << right
-			     << ", "
-			     << up
-			     << ", "
-			     << yaw_rate_cw
-			     << "}"
-			     << endl;
+//			cout << "Controlling joysticks with FRUY = {"
+//			     << forward
+//			     << ", "
+//			     << right
+//			     << ", "
+//			     << up
+//			     << ", "
+//			     << yaw_rate_cw
+//			     << "}"
+//			     << endl;
 
 			// set the mode to be velocities relative to body coordinates with stable mode enabled
 			T_DjiFlightControllerJoystickMode joystickMode =
@@ -955,7 +984,34 @@ void* flight_control_function(void* args)
 
 			// execute the joystick command
 			DjiFlightController_ExecuteJoystickAction(joystickCommand);
+
+			if( control_policy.get_cancel_landing() )
+			{
+				djiStat = DjiFlightController_CancelLanding();
+				if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					USER_LOG_ERROR("Cancel landing failed, error code: 0x%08X", djiStat);
+				}
+				else
+				{
+					USER_LOG_INFO("******************** Canceled landing! ********************");
+				}
+			}
+			else if( control_policy.get_start_landing() )
+			{
+				djiStat = DjiFlightController_StartLanding();
+				if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					USER_LOG_ERROR("Start landing failed, error code: 0x%08X", djiStat);
+				}
+				else
+				{
+					USER_LOG_INFO("******************** Started landing! ********************");
+				}
+			}
 		}
+       
+		control_policy.set_landed( flight_status != DJI_FC_SUBSCRIPTION_FLIGHT_STATUS_IN_AIR );
 
 		if( automatic_landing )
 		{
@@ -975,17 +1031,19 @@ void* flight_control_function(void* args)
 
 		if( automatic_takeoff )
 		{
+			control_policy.restart();
+
 			cout << "automatic takeoff!" << endl;
 			automatic_takeoff = false;
-			djiStat = DjiFlightController_StartTakeoff();
-			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-			{
-				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
-			}
-			else
-			{
-				USER_LOG_INFO("Started takeoff!");
-			}
+//			djiStat = DjiFlightController_StartTakeoff();
+//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//			{
+//				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
+//			}
+//			else
+//			{
+//				USER_LOG_INFO("Started takeoff!");
+//			}
 			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_takeoff_index, false, nullptr);
 		}
 
@@ -1078,9 +1136,21 @@ void* gimbal_control_function(void* args)
 		USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
 	}
 
+	// set initial gimbal heading offset by default
+	gimbal_heading_offset = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
+
 	GimbalPolicy gimbal_policy; 
 	while( running )
 	{
+		if( reset_gimbal_alignment )
+		{
+			gimbal_heading_offset = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
+//			gimbal_heading_offset = gimbal_relative_yaw;
+			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, gimbal_alignment_index, (int32_t)false, nullptr);
+
+			cout << "Resetting gimbal offset to " << gimbal_relative_yaw << endl;
+		}
+
 		if( aim_gimbal )
 		{
 			gimbal_policy = control_policy.get_gimbal_policy();
@@ -1178,7 +1248,6 @@ void* gimbal_control_function(void* args)
 			else if( gimbal_policy == GIMBAL_NO_CHANGE )
 			{
 				gimbal_reset_vertically_down_flag = false;
-				cout << "no gimbal control" << endl;
 			}
 			else
 			{
@@ -1360,65 +1429,115 @@ void* camera_management_function(void* args)
 //		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - apriltag_detection_timestamp);
 //		// if the april tag detection is young enough to be considered a valid recognition of the landing pad
 //		if( aim_gimbal && duration.count() < 500 && global_image_half_width != 0 && global_image_half_height != 0 )
-		if( control_policy.get_zoom_policy() == ZOOM_AUTO )
+		if( aim_gimbal )
 		{
-			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			if( control_policy.get_zoom_policy() == ZOOM_AUTO )
 			{
-				// if the landing pad is too small
-				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.015 )
+				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 				{
-					// zoom in
-					USER_LOG_INFO("Landing pad too small - zooming in...");
-					returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_SLOW);
-					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					// if the landing pad is too small
+					if( apriltag_detection_area != 0 && apriltag_detection_area < 0.002 )
 					{
-						USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
-						               " error code :0x%08X.", mountPosition, returnCode);
-					}
-				}
-				// else if the landing pad is too big
-				else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.0325 )
-				{
-					USER_LOG_INFO("landing pad too big");
-					if( opticalZoomParam.currentOpticalZoomFactor > 2.0 )
-					{
-						USER_LOG_INFO("zooming out...");
-						// zoom out
-						returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_SLOW);
+						// zoom in
+						USER_LOG_INFO("Landing pad too small - zooming in...");
+						returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_IN, DJI_CAMERA_ZOOM_SPEED_SLOW);
 						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 						{
 							USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
-							               " error code :0x%08X.", mountPosition, returnCode);
+								       " error code :0x%08X.", mountPosition, returnCode);
 						}
 					}
-					else
+					// else if the landing pad is too big
+					else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.0325 )
 					{
-						USER_LOG_INFO("Trying to switch to wide angle camera...");
-						intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
+						USER_LOG_INFO("landing pad too big");
+						if( opticalZoomParam.currentOpticalZoomFactor > 2.0 )
+						{
+							USER_LOG_INFO("zooming out...");
+							// zoom out
+							returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_SLOW);
+							if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+							{
+								USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
+									       " error code :0x%08X.", mountPosition, returnCode);
+							}
+						}
+						else
+						{
+							USER_LOG_INFO("Trying to switch to wide angle camera...");
+							intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM;
+						}
+					}
+					// if the landing pad is an ok size
+					else if( apriltag_detection_area != 0 )
+					{
+//						USER_LOG_INFO("Landing pad ok size - keeping zoom level constant.");
+
+						returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+							returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+						{
+							USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+								       " error code :0x%08X", mountPosition, returnCode);
+						}
 					}
 				}
-				// if the landing pad is an ok size
-				else if( apriltag_detection_area != 0 )
+				else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
 				{
-					USER_LOG_INFO("Landing pad ok size - keeping zoom level constant.");
-
+					// if the landing pad is too small
+					if( apriltag_detection_area != 0 && apriltag_detection_area < 0.01 )
+					{
+						intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
+					}
+					
+					// stop any continuous zooming
 					returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
 					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-					        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+						returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 					{
 						USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-						               " error code :0x%08X", mountPosition, returnCode);
+							       " error code :0x%08X", mountPosition, returnCode);
+					}
+				}
+				else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+				{
+					// stop any continuous zooming
+					returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+						returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					{
+						USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+							       " error code :0x%08X", mountPosition, returnCode);
 					}
 				}
 			}
-			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
+			else if( control_policy.get_zoom_policy() == ZOOM_OUT )
 			{
-				// if the landing pad is too small
-				if( apriltag_detection_area != 0 && apriltag_detection_area < 0.01 )
+				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
 				{
-					intended_stream_source = DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM;
+					USER_LOG_INFO("zooming out...");
+					// zoom out
+					returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_SLOW);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					{
+						USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
+							       " error code :0x%08X.", mountPosition, returnCode);
+					}
 				}
-				
+				else
+				{
+					// stop any continuous zooming
+					returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
+						returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+					{
+						USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
+							       " error code :0x%08X", mountPosition, returnCode);
+					}
+				}
+			}
+			else if( control_policy.get_zoom_policy() == ZOOM_NONE )    // if the landing pad detection has timed out
+			{
 				// stop any continuous zooming
 				returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
 				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
@@ -1426,31 +1545,6 @@ void* camera_management_function(void* args)
 				{
 					USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
 						       " error code :0x%08X", mountPosition, returnCode);
-				}
-			}
-			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
-			{
-				// stop any continuous zooming
-				returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
-				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-					returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
-				{
-					USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-						       " error code :0x%08X", mountPosition, returnCode);
-				}
-			}
-		}
-		else if( control_policy.get_zoom_policy() == ZOOM_OUT )
-		{
-			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
-			{
-				USER_LOG_INFO("zooming out...");
-				// zoom out
-				returnCode = DjiCameraManager_StartContinuousOpticalZoom(mountPosition, DJI_CAMERA_ZOOM_DIRECTION_OUT, DJI_CAMERA_ZOOM_SPEED_SLOW);
-				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
-				{
-					USER_LOG_ERROR("Mounted position %d camera start continuous zoom failed,"
-						       " error code :0x%08X.", mountPosition, returnCode);
 				}
 			}
 			else
@@ -1465,26 +1559,15 @@ void* camera_management_function(void* args)
 				}
 			}
 		}
-		else if( control_policy.get_zoom_policy() == ZOOM_NONE )    // if the landing pad detection has timed out
-		{
-			// stop any continuous zooming
-			returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
-			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-			        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
-			{
-				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-				               " error code :0x%08X", mountPosition, returnCode);
-			}
-		}
 		else
 		{
 			// stop any continuous zooming
 			returnCode = DjiCameraManager_StopContinuousOpticalZoom(mountPosition);
 			if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS &&
-			        returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+				returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 			{
 				USER_LOG_ERROR("Mounted position %d camera stop continuous zoom failed,"
-				               " error code :0x%08X", mountPosition, returnCode);
+					       " error code :0x%08X", mountPosition, returnCode);
 			}
 		}
 		osalHandler->TaskSleepMs(30);
@@ -1532,6 +1615,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	if( nullptr == tf )
 	{
 		tf = tagCustom48h12_create();
+//		tf = tagCustom24h10_create();
 		td = apriltag_detector_create();
 		apriltag_detector_add_family(td, tf);
 
