@@ -627,7 +627,10 @@ void ControlPolicy::update()
 					break;
 
 				case MODE_DESCENT:
-					change_mode( MODE_DESCENT_ZOOM_OUT );
+					if( zoom_factor > 2 )
+					{
+						change_mode( MODE_DESCENT_ZOOM_OUT );
+					}
 					break;
 
 				default:
@@ -648,7 +651,10 @@ void ControlPolicy::update()
 				case MODE_HORIZONTAL_ALIGNMENT:
 					break;
 				case MODE_DESCENT:
-					change_mode( MODE_HORIZONTAL_ALIGNMENT );
+					if( zoom_factor > 2 )
+					{
+						change_mode( MODE_HORIZONTAL_ALIGNMENT );
+					}
 				case MODE_COMMIT:
 					break;
 				default:
@@ -682,9 +688,9 @@ void ControlPolicy::update()
 					change_mode( MODE_DESCENT );
 					break;
 				
-//				case MODE_DESCENT:
-//					change_mode( MODE_LANDED );
-//					break;
+				case MODE_DESCENT:
+					change_mode( MODE_LANDED );
+					break;
 
 				default:
 					cout << "no objective rule for mode " << mode_names[current_mode] << endl;
@@ -825,9 +831,9 @@ void ControlPolicy::get_flight_control_effort(double& forward, double& right, do
 			right   =  0.1 * theta_u;
 			break;
 		case MODE_DESCENT:
-			forward = -0.1 * theta_v;
-			right   =  0.1 * theta_u;
-			up      = -0.5;
+//			forward = -0.1 * theta_v;
+//			right   =  0.1 * theta_u;
+//			up      = -0.5;
 			break;
 		case MODE_DESCENT_ZOOM_OUT:
 			break;

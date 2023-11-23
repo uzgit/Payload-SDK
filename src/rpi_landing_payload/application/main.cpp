@@ -56,6 +56,7 @@
 #include "opencv2/highgui/highgui.hpp"
 
 #include <apriltag/apriltag.h>
+#include <apriltag/tag36h11.h>
 #include <apriltag/tagCustom24h10.h>
 #include <apriltag/tagCustom48h12.h>
 #include <apriltag/common/getopt.h>
@@ -121,6 +122,8 @@ T_DjiReturnCode djiStat;
 T_DjiFcSubscriptionGimbalAngles gimbal_angles;
 T_DjiFcSubscriptionRC rc_status;
 T_DjiFcSubscriptionFlightStatus flight_status;
+T_DjiFcSubscriptionAltitudeFused altitudeFused = 0;
+T_DjiFcSubscriptionAltitudeFused altitudeHome = 0;
 T_DjiDataTimestamp timestamp = {0};
 double aircraft_yaw;
 double gimbal_relative_yaw;
@@ -642,7 +645,21 @@ void* subscription_thread_function(void* args)
 	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
-		USER_LOG_ERROR("Error subscribing to the altitude flight status topic!");
+		USER_LOG_ERROR("Error subscribing to the flight status topic!");
+	}
+	
+	// subscribe to the flight status
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the flight status topic!");
+	}
+
+	// subscribe to the flight status
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the flight status topic!");
 	}
 
 	while(running)
@@ -684,6 +701,18 @@ void* subscription_thread_function(void* args)
 		{
 			USER_LOG_ERROR("Error getting the quaternion topic!");
 		}
+    
+//		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
+//                                                      (uint8_t *) &altitudeFused,
+//                                                      sizeof(T_DjiFcSubscriptionAltitudeFused),
+//                                                      &timestamp);
+//		
+//		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT,
+//                                                      (uint8_t *) &altitudeHome,
+//                                                      sizeof(T_DjiFcSubscriptionAltitudeOfHomePoint),
+//                                                      &timestamp);
+//
+//		cout << "altitude: " << altitudeFused - altitudeHome << endl;
 
 		double aircraftYawInRad = atan2(2 * ((double) quaternion.q0 * quaternion.q3 + (double) quaternion.q1 * quaternion.q2),
 		                                (double) 1 -
@@ -740,6 +769,18 @@ void* subscription_thread_function(void* args)
 	}
 	
 	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_STATUS_FLIGHT);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
+	}
+	
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
+	}
+	
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
 		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
@@ -1035,15 +1076,15 @@ void* flight_control_function(void* args)
 
 			cout << "automatic takeoff!" << endl;
 			automatic_takeoff = false;
-//			djiStat = DjiFlightController_StartTakeoff();
-//			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-//			{
-//				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
-//			}
-//			else
-//			{
-//				USER_LOG_INFO("Started takeoff!");
-//			}
+			djiStat = DjiFlightController_StartTakeoff();
+			if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+			{
+				USER_LOG_ERROR("Start takeoff failed, error code: 0x%08X", djiStat);
+			}
+			else
+			{
+				USER_LOG_INFO("Started takeoff!");
+			}
 			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, automatic_takeoff_index, false, nullptr);
 		}
 
@@ -1238,7 +1279,7 @@ void* gimbal_control_function(void* args)
 						}
 					}
 
-					returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_DOWNWARD_UPWARD);
+					returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_DOWNWARD_UPWARD_AND_YAW);
 					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 					{
 						USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
@@ -1614,7 +1655,8 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	// ***************************************************************************
 	if( nullptr == tf )
 	{
-		tf = tagCustom48h12_create();
+		tf = tag36h11_create();
+//		tf = tagCustom48h12_create();
 //		tf = tagCustom24h10_create();
 		td = apriltag_detector_create();
 		apriltag_detector_add_family(td, tf);
@@ -1649,6 +1691,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 
 	zarray_t *detections = apriltag_detector_detect(td, &im);
 
+//	cout << "detections: " << zarray_size(detections) << endl;
 
 	// get the maximum ID in the detections:
 	int maximum_id = -1;
@@ -1656,6 +1699,7 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	{
 		apriltag_detection_t* det;
 		zarray_get(detections, i, &det);
+
 		if( maximum_id < det->id )
 		{
 			maximum_id = det->id;
@@ -1772,6 +1816,7 @@ int main(int argc, char **argv)
 {
 	signal(SIGINT, graceful_exit);
 	signal(SIGTERM, graceful_exit);
+	signal(SIGSEGV, graceful_exit);
 
 	Application application(argc, argv);
 	char inputChar;
