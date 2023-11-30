@@ -44,6 +44,10 @@
 #define SENSOR_WIDTH_IR  7.68
 #define SENSOR_HEIGHT_IR 6.144
 
+#define THERMAL_CAMERA_ROTATION_SCALAR 1.0
+
+#define LOG 0
+
 // standard includes
 #include <csignal>
 #include <thread>
@@ -74,6 +78,7 @@
 #include <gimbal_emu/test_payload_gimbal_emu.h>
 #include <camera_emu/test_payload_cam_emu_media.h>
 #include <camera_emu/test_payload_cam_emu_base.h>
+#include "dji_payload_camera.h"
 #include <dji_logger.h>
 #include "widget/test_widget.h"
 #include "widget/test_widget_speaker.h"
@@ -131,6 +136,19 @@ bool reset_gimbal_alignment = false;
 double gimbal_heading_offset = 0; // for use in the very common case that the heading of the gimbal camera doesn't agree with that of the drone
 double gimbal_tilt;
 mutex fcu_subscription_mutex;
+// for logging
+T_DjiFcSubscriptionGpsPosition gps_position;
+T_DjiFcSubscriptionGpsVelocity gps_velocity;
+T_DjiFcSubscriptionGpsTime     gps_time;
+T_DjiFcSubscriptionGpsDetails  gps_details;
+T_DjiFcSubscriptionPositionVO  position_vo;
+double control_effort_gimbal_pan;
+double control_effort_gimbal_tilt;
+double control_effort_forward;
+double control_effort_right;
+double control_effort_up;
+double control_effort_yaw_cw;
+// end logging
 
 pthread_t gimbal_control_thread;
 E_DjiMountPosition gimbal_mount_position = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
@@ -179,7 +197,10 @@ T_DjiCameraManagerOpticalZoomParam opticalZoomParam;
 
 // widget variables
 //pthread_t widget_poll_thread;
-int32_t gimbal_alignment_index = 5;
+//int32_t gimbal_alignment_index = 5;
+int32_t apriltag_family_select_index = 5;
+bool apriltag_family_48h12_36h11 = false; // false -> 48h12, true -> 36h11
+bool previous_apriltag_family_48h12_36h11 = true; // false -> 48h12, true -> 36h11
 int32_t stop_switch_index = 6;
 mutex widget_mutex;
 int32_t aim_gimbal_index = 0;
@@ -221,6 +242,9 @@ double constrain(double value, double lower, double upper);
 
 pthread_t flight_control_thread;
 
+pthread_t logging_thread;
+void* logging_thread_function(void* args);
+
 #if MAIN_CAMERA
 const char* camera_name = "MAIN_CAM";
 #else
@@ -228,9 +252,12 @@ const char* camera_name = "FPV_CAM";
 #endif
 LiveviewSample* liveviewSample;// = new LiveviewSample();
 apriltag_family_t *tf = nullptr;
+apriltag_family_t *tf_36h11 = nullptr;
+apriltag_family_t *tf_48h12 = nullptr;
 apriltag_detector_t *td = nullptr;
 double global_image_half_width  = 0;
 double global_image_half_height = 0;
+bool apriltag_callback_init = true;
 
 // function declarations
 void initialize();
@@ -313,6 +340,12 @@ void initialize()
 		cout << "problem" << endl;
 		return deinitialize();
 	}
+	
+	if( pthread_create( & logging_thread, NULL, logging_thread_function, NULL ) )
+	{
+		cout << "problem" << endl;
+		return deinitialize();
+	}
 }
 
 void deinitialize()
@@ -336,6 +369,9 @@ void deinitialize()
 	
 	USER_LOG_INFO("joining flight control thread");
 	pthread_join(control_policy_update_thread, NULL);
+	
+	USER_LOG_INFO("joining logging thread");
+	pthread_join(logging_thread, NULL);
 	USER_LOG_INFO("all threads joined");
 
 	USER_LOG_INFO("deleting liveview object");
@@ -408,10 +444,14 @@ static T_DjiReturnCode DjiTestWidget_GetWidgetValue(E_DjiWidgetType widgetType, 
 	{
 		automatic_takeoff = (bool) *value;
 	}
-	else if( index == gimbal_alignment_index )
+	else if( index == apriltag_family_select_index )
 	{
-		reset_gimbal_alignment = (bool) *value;
+		apriltag_family_48h12_36h11 = (bool) * value;
 	}
+//	else if( index == gimbal_alignment_index )
+//	{
+//		reset_gimbal_alignment = (bool) *value;
+//	}
 	else if( index == stop_switch_index )
 	{
 		if( *value )
@@ -563,6 +603,161 @@ void initialize_widget()
 	}
 }
 
+void* logging_thread_function(void* args)
+{
+	USER_LOG_INFO("Starting logging thread thread!");
+	T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
+
+	std::string log_directory = "/home/joshua/Documents/logs/";
+	std::string filename;
+
+	std::ofstream output_file;
+
+	while(running)
+	{
+#if LOG
+		uint32_t sysTimeMs = 0;
+		djiStat = osalHandler->GetTimeMs(&sysTimeMs);
+
+		if(      control_policy.get_mode() != MODE_LANDED && !output_file.is_open() )
+		{
+			filename = log_directory + "log_" + std::to_string( gps_time ) + ".csv";
+			output_file.open(filename);
+
+			cout << "Opened log file: " << filename << endl;
+
+			// output headers
+			output_file << "gps_time"
+				    << ","
+				    << "gps_position_x" 
+				    << ","
+				    << "gps_position_y" 
+				    << ","
+				    << "gps_position_z" 
+				    << ","
+				    << "gps_velocity_x" 
+				    << ","
+				    << "gps_velocity_y" 
+				    << ","
+				    << "gps_velocity_z" 
+				    << ","
+				    << "gimbal_tilt"
+				    << ","
+				    << "gimbal_relative_yaw"
+				    << ","
+				    << "stream_source"
+				    << ","
+				    << "zoom_factor"
+				    << ","
+				    << "theta_u"
+				    << ","
+				    << "theta_v"
+				    << ","
+				    << "landing_pad_pan"
+				    << ","
+				    << "landing_pad_tilt"
+				    << ","
+				    << "autonomous_control_enabled"
+				    << ","
+				    << "mode"
+				    << ","
+				    << "control_effort_gimbal_tilt"
+				    << ","
+				    << "control_effort_gimbal_pan"
+				    << ","
+				    << "control_effort_forward"
+				    << ","
+				    << "control_effort_right"
+				    << ","
+				    << "control_effort_up"
+				    << ","
+				    << "control_effort_yaw_cw"
+				    << endl;
+		}
+		else if( control_policy.get_mode() == MODE_LANDED && output_file.is_open() )
+		{
+			output_file.close();
+			cout << "Closed log file: " << filename << endl;
+		}
+		
+		if( output_file.is_open() )
+		{
+			double zoom_factor = control_policy.get_zoom_factor();
+			std::string stream_source_name = "ERROR";
+			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
+			{
+				stream_source_name = "wide";
+			}
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+			{
+				stream_source_name = "zoom";
+			}
+			else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+			{
+				stream_source_name = "ir";
+			}
+
+			output_file << gps_time
+				    << ","
+				    << gps_position.x
+				    << ","
+				    << gps_position.y
+				    << ","
+				    << gps_position.z
+				    << ","
+				    << gps_velocity.x
+				    << ","
+				    << gps_velocity.y
+				    << ","
+				    << gps_velocity.z
+				    << ","
+				    << gimbal_tilt
+				    << ","
+				    << gimbal_relative_yaw
+				    << ","
+				    << stream_source_name
+				    << ","
+				    << zoom_factor
+				    << ","
+				    << theta_u
+				    << ","
+				    << theta_v
+				    << ","
+				    << landing_pad_pan
+				    << ","
+				    << landing_pad_tilt
+				    << ","
+				    << autonomous_control
+				    << ","
+				    << current_mode_name
+				    << ","
+				    << control_effort_gimbal_tilt
+				    << ","
+				    << control_effort_gimbal_pan
+				    << ","
+				    << control_effort_forward
+				    << ","
+				    << control_effort_right
+				    << ","
+				    << control_effort_up
+				    << ","
+				    << control_effort_yaw_cw
+				    << endl;
+		}
+#endif
+		std::chrono::milliseconds sleep_duration(200);
+		std::this_thread::sleep_for(sleep_duration);
+	}
+	
+	if( output_file.is_open() )
+	{
+		output_file.close();
+		cout << "Closed log file: " << filename << endl;
+	}
+
+	USER_LOG_INFO("Ending logging thread thread!");
+}
+
 void* control_policy_update_function(void* args)
 {
 	USER_LOG_INFO("Starting control policy update thread!");
@@ -648,19 +843,47 @@ void* subscription_thread_function(void* args)
 		USER_LOG_ERROR("Error subscribing to the flight status topic!");
 	}
 	
-	// subscribe to the flight status
-	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-	{
-		USER_LOG_ERROR("Error subscribing to the flight status topic!");
-	}
+//	// subscribe to the flight status
+//	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+//	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//	{
+//		USER_LOG_ERROR("Error subscribing to the flight status topic!");
+//	}
+//
+//	// subscribe to the flight status
+//	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+//	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//	{
+//		USER_LOG_ERROR("Error subscribing to the flight status topic!");
+//	}
 
-	// subscribe to the flight status
-	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT, DJI_DATA_SUBSCRIPTION_TOPIC_50_HZ, NULL);
+	// for logging
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION, DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ, NULL);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
-		USER_LOG_ERROR("Error subscribing to the flight status topic!");
+		USER_LOG_ERROR("Error subscribing to the GPS position topic!");
 	}
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_VELOCITY, DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_TIME, DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS, DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS detail topic!");
+	}
+	djiStat = DjiFcSubscription_SubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_VO, DJI_DATA_SUBSCRIPTION_TOPIC_5_HZ, NULL);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	// end logging
 
 	while(running)
 	{
@@ -692,6 +915,10 @@ void* subscription_thread_function(void* args)
 				      (uint8_t *) &flight_status,
 				      sizeof(T_DjiFcSubscriptionFlightStatus),
 				      &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the flight status topic!");
+		}
 
 		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_QUATERNION,
 		          (uint8_t *) &quaternion,
@@ -701,7 +928,49 @@ void* subscription_thread_function(void* args)
 		{
 			USER_LOG_ERROR("Error getting the quaternion topic!");
 		}
-    
+	
+		// for logging	
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION,
+		          (uint8_t *) &gps_position,
+		          sizeof(T_DjiFcSubscriptionGpsPosition),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the GPS position topic!");
+		}
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_VELOCITY,
+		          (uint8_t *) &gps_velocity,
+		          sizeof(T_DjiFcSubscriptionGpsVelocity),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the GPS velocity topic!");
+		}
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_TIME,
+		          (uint8_t *) &gps_time,
+		          sizeof(T_DjiFcSubscriptionGpsTime),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the GPS time topic!");
+		}
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS,
+		          (uint8_t *) &gps_details,
+		          sizeof(T_DjiFcSubscriptionGpsDetails),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the GPS detail topic!");
+		}
+		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_VO,
+		          (uint8_t *) &position_vo,
+		          sizeof(T_DjiFcSubscriptionPositionVO),
+		          &timestamp);
+		if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+		{
+			USER_LOG_ERROR("Error getting the position VO topic!");
+		}
+		// end logging
 //		djiStat = DjiFcSubscription_GetLatestValueOfTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED,
 //                                                      (uint8_t *) &altitudeFused,
 //                                                      sizeof(T_DjiFcSubscriptionAltitudeFused),
@@ -774,17 +1043,45 @@ void* subscription_thread_function(void* args)
 		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
 	}
 	
-	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
-	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
-	{
-		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
-	}
+//	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_FUSED);
+//	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//	{
+//		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
+//	}
+//	
+//	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
+//	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+//	{
+//		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
+//	}
 	
-	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_ALTITUDE_OF_HOMEPOINT);
+	// for logging
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_POSITION);
 	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 	{
-		USER_LOG_ERROR("Error unsubscribing from the flight status topic!");
+		USER_LOG_ERROR("Error subscribing to the GPS position topic!");
 	}
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_VELOCITY);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_TIME);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_GPS_DETAILS);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS detail topic!");
+	}
+	djiStat = DjiFcSubscription_UnSubscribeTopic(DJI_FC_SUBSCRIPTION_TOPIC_POSITION_VO);
+	if (djiStat != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+	{
+		USER_LOG_ERROR("Error subscribing to the GPS velocity topic!");
+	}
+	// end logging
 
 	USER_LOG_INFO("Ending data retrieval thread.");
 	return nullptr;
@@ -997,6 +1294,21 @@ void* flight_control_function(void* args)
 			up          = constrain(up,           -2.0,   2.0);
 			yaw_rate_cw = constrain(yaw_rate_cw, -30.0,  30.0);
 
+			if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+			{
+				forward     = constrain(forward,      -1.0,   1.0);
+				right       = constrain(right,        -1.0,   1.0);
+				up          = constrain(up,           -1.0,   1.0);
+			}
+
+			// for logging
+			control_effort_forward = forward;
+			control_effort_right   = right;
+			control_effort_up      = up;
+			control_effort_yaw_cw  = yaw_rate_cw;
+			// end logging
+				
+
 			// announce the control efforts
 //			cout << "Controlling joysticks with FRUY = {"
 //			     << forward
@@ -1050,6 +1362,15 @@ void* flight_control_function(void* args)
 					USER_LOG_INFO("******************** Started landing! ********************");
 				}
 			}
+		}
+		else
+		{
+			// for logging
+			control_effort_forward = 0;
+			control_effort_right   = 0;
+			control_effort_up      = 0;
+			control_effort_yaw_cw  = 0;
+			// end logging
 		}
        
 		control_policy.set_landed( flight_status != DJI_FC_SUBSCRIPTION_FLIGHT_STATUS_IN_AIR );
@@ -1187,7 +1508,7 @@ void* gimbal_control_function(void* args)
 		{
 			gimbal_heading_offset = fmod(gimbal_angles.z, 360) - fmod(aircraft_yaw, 360);
 //			gimbal_heading_offset = gimbal_relative_yaw;
-			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, gimbal_alignment_index, (int32_t)false, nullptr);
+//			DjiTestWidget_SetWidgetValue(DJI_WIDGET_TYPE_SWITCH, gimbal_alignment_index, (int32_t)false, nullptr);
 
 			cout << "Resetting gimbal offset to " << gimbal_relative_yaw << endl;
 		}
@@ -1238,6 +1559,17 @@ void* gimbal_control_function(void* args)
 				rotation.time = 0.05;	// do not increase this too much because then the rotation command blocks for longer
 				rotation.yaw   = (float) gimbal_pan_control_effort;
 				rotation.pitch = (float) gimbal_tilt_control_effort;
+				
+				control_effort_gimbal_tilt = rotation.pitch;
+				control_effort_gimbal_pan  = rotation.yaw;
+
+				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+				{
+					rotation.yaw   *= THERMAL_CAMERA_ROTATION_SCALAR;
+					rotation.pitch *= THERMAL_CAMERA_ROTATION_SCALAR;
+				}
+
+
 
 	//			cout << "( " << gimbal_pan_control_effort << " , " << gimbal_tilt_control_effort << " )" << endl;
 
@@ -1295,6 +1627,11 @@ void* gimbal_control_function(void* args)
 				gimbal_reset_vertically_down_flag = false;
 				USER_LOG_ERROR("Unknown gimbal mode!");
 			}
+		}
+		else
+		{
+			control_effort_gimbal_tilt = 0;
+			control_effort_gimbal_pan  = 0;
 		}
 
 		std::chrono::milliseconds sleep_duration(20);
@@ -1436,13 +1773,23 @@ void* camera_management_function(void* args)
 		}
 		intended_stream_source_mutex.unlock();
 
-		// get zoom factor of zoom camera
+		// get optical zoom factor of zoom camera
 		returnCode = DjiCameraManager_GetOpticalZoomParam(mountPosition, &opticalZoomParam);
 		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
 		{
 			USER_LOG_ERROR("Getting mounted position %d camera's zoom param failed, error code :0x%08X", mountPosition, returnCode);
 		}
 
+//		// get digital zoom factor of camera
+//		float digital_zoom_factor;
+//                returnCode = DjiTest_CameraGetDigitalZoomFactor(&digital_zoom_factor);
+//		if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS && returnCode != DJI_ERROR_CAMERA_MANAGER_MODULE_CODE_UNSUPPORTED_COMMAND)
+//		{
+//			USER_LOG_ERROR("Getting mounted position %d camera's zoom param failed, error code :0x%08X", mountPosition, returnCode);
+//		}
+//
+//		cout << "digital zoom factor: " << digital_zoom_factor << endl;
+		
 //typedef enum {
 //    DJI_CAMERA_MANAGER_SOURCE_DEFAULT_CAM = 0x0,
 //    DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM = 0x1,
@@ -1653,11 +2000,13 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	cvtColor(mat, mat, COLOR_RGB2BGR);
 
 	// ***************************************************************************
-	if( nullptr == tf )
+	if( apriltag_callback_init )
 	{
-		tf = tag36h11_create();
-//		tf = tagCustom48h12_create();
-//		tf = tagCustom24h10_create();
+		apriltag_callback_init = false;
+
+		cout << "Initializing April Tag callback components!" << endl;
+
+		tf = tagCustom48h12_create();
 		td = apriltag_detector_create();
 		apriltag_detector_add_family(td, tf);
 
@@ -1666,6 +2015,36 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 		td->nthreads      = 4;
 		td->debug         = false;
 		td->refine_edges  = false;
+	}
+
+	if( apriltag_family_48h12_36h11 != previous_apriltag_family_48h12_36h11 )
+	{
+		cout << "changing april tag family" << endl;
+
+		previous_apriltag_family_48h12_36h11 = apriltag_family_48h12_36h11;
+ 		
+		if( ! apriltag_family_48h12_36h11 )
+		{
+			cout << "\tsetting family to 48h12" << endl;
+
+			apriltag_detector_clear_families(td);
+			
+			tag36h11_destroy(tf);
+			tf = tagCustom48h12_create();
+
+			apriltag_detector_add_family(td, tf);
+		}
+		else
+		{
+			cout << "\tsetting family to 36h11" << endl;
+
+			apriltag_detector_clear_families(td);
+			
+			tagCustom48h12_destroy(tf);
+			tf = tag36h11_create();
+
+			apriltag_detector_add_family(td, tf);
+		}
 	}
 
 	if( global_image_half_width == 0 || global_image_half_height == 0 )

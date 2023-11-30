@@ -26,8 +26,8 @@
         "widget_type": "switch",
         "widget_name": "video_stream_switch",
         "icon_file_set": {
-          "icon_file_name_selected": "shutter_icon_thermal.png",
-          "icon_file_name_unselected": "shutter_icon_rgb.png"
+          "icon_file_name_selected": "crosshairs_select.png",
+          "icon_file_name_unselected": "crosshairs_unselect.png"
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
@@ -76,10 +76,10 @@
       {
         "widget_index": 5,
         "widget_type": "switch",
-        "widget_name": "apriltag_family_switch",
+        "widget_name": "gimbal_alignment_switch",
         "icon_file_set": {
-          "icon_file_name_selected": "icon_36h11.png",
-          "icon_file_name_unselected": "icon_48h12.png"
+          "icon_file_name_selected": "crosshairs_select.png",
+          "icon_file_name_unselected": "crosshairs_unselect.png"
         },
         "customize_rc_buttons_config": {
           "is_enable": true,
@@ -91,8 +91,8 @@
         "widget_type": "switch",
         "widget_name": "stop_switch",
         "icon_file_set": {
-          "icon_file_name_selected": "power_button_icon_red.png",
-          "icon_file_name_unselected": "power_button_icon_bw.png"
+          "icon_file_name_selected": "icon_switch_select.png",
+          "icon_file_name_unselected": "icon_switch_unselect.png"
         },
         "customize_rc_buttons_config": {
           "is_enable": true,

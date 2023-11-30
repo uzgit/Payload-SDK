@@ -135,7 +135,7 @@ struct ModeParameters
 	  max_time(maxTime),
 	  zoom_policy(zoomSetting)
 	{
-		std::cout << "ModeParameters constructor called." << std::endl;
+//		std::cout << "ModeParameters constructor called." << std::endl;
 	}	
 };
 
@@ -233,6 +233,7 @@ public:
 	void update_landing_pad_detection(uint64_t detection_time, double new_theta_u, double new_theta_v, double new_relative_yaw, double new_theta_pan, double new_theta_tilt);
 	void update_gimbal_orientation(uint64_t time, double tilt);
 	void update_zoom_factor(double zoom);
+	double get_zoom_factor();
 	void get_gimbal_control_effort(double& tilt, double& pan);
 	void get_flight_control_effort(double& forward, double& right, double& up, double& yaw_rate_cw);
 	
@@ -428,7 +429,8 @@ bool ControlPolicy::close()
 {
 	bool result = false;
 
-	if( theta_pan < 3 && theta_tilt < -84 )
+//	if( theta_pan < 3 && theta_tilt < -84 )
+	if( theta_pan < 3 && abs(theta_tilt + 90) < 6 )
 	{
 		result = true;
 	}
@@ -440,7 +442,7 @@ bool ControlPolicy::yaw_aligned()
 {
 	bool result = false;
 
-	if( abs(relative_yaw) < 3.0 )
+	if( abs(relative_yaw) < 1.0 )
 	{
 		result = true;
 	}
@@ -452,7 +454,8 @@ bool ControlPolicy::horizontally_aligned()
 {
 	bool result = false;
 
-	if( abs(theta_pan) < 7 && theta_tilt < -88 )
+//	if( abs(theta_pan) < 7 && theta_tilt < -88 && theta_tilt > -92 )
+	if( abs(theta_pan) < 2 && abs(theta_tilt + 90) < 1 )
 	{
 		result = true;
 	}
@@ -633,6 +636,9 @@ void ControlPolicy::update()
 					}
 					break;
 
+				case MODE_LANDED:
+					break;
+
 				default:
 					cout << "no loss rule for mode " << mode_names[current_mode] << endl;
 					break;
@@ -741,6 +747,11 @@ void ControlPolicy::update()
 void ControlPolicy::update_zoom_factor( double zoom )
 {
 	zoom_factor = zoom;
+}
+
+double ControlPolicy::get_zoom_factor()
+{
+	return zoom_factor;
 }
 
 void ControlPolicy::update_landing_pad_detection(uint64_t detection_time, double new_theta_u, double new_theta_v, double new_relative_yaw, double new_theta_pan, double new_theta_tilt)
