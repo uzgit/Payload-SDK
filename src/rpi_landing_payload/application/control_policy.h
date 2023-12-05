@@ -14,6 +14,7 @@ enum Mode
 	MODE_SEARCH_DOWN,
 	MODE_SEARCH_UP,
 	MODE_AIM_CAMERA,
+	MODE_ALIGN,
 	MODE_APPROACH,
 	MODE_YAW_ALIGNMENT,
 	MODE_HORIZONTAL_ALIGNMENT,
@@ -39,7 +40,8 @@ enum GimbalPolicy
 {
 	GIMBAL_NO_CHANGE = 0,
 	GIMBAL_FORWARD,
-	GIMBAL_ACTIVE,
+	GIMBAL_SPEED,
+	GIMBAL_ANGLE,
 	GIMBAL_DOWN,
 	GIMBAL_MAX
 };
@@ -47,7 +49,7 @@ enum GimbalPolicy
 const char* gimbal_policy_names[] = {
 	"GIMBAL_NO_CHANGE",
 	"GIMBAL_FORWARD",
-	"GIMBAL_ACTIVE",
+	"GIMBAL_SPEED",
 	"GIMBAL_DOWN",
 	"GIMBAL_MAX"
 };
@@ -66,6 +68,7 @@ const char* mode_names[] = {
 	"MODE_SEARCH_DOWN",
 	"MODE_SEARCH_UP",
 	"MODE_AIM_CAMERA",
+	"MODE_ALIGN",
 	"MODE_APPROACH",
 	"MODE_YAW_ALIGNMENT",
 	"MODE_HORIZONTAL_ALIGNMENT",
@@ -84,6 +87,7 @@ const char* short_mode_names[] = {
 	"Search Down",
 	"Search Up",
 	"Aim Camera",
+	"Align",
 	"Approach",
 	"Yaw Align",
 	"Horiz. Align",
@@ -185,6 +189,7 @@ private:
 	uint64_t last_landing_pad_detection_time;
 	uint64_t last_gimbal_orientation_time;
 	uint64_t state_change_time;
+	uint64_t last_aim_gimbal_time;
 
 	double theta_u;
 	double theta_v;
@@ -196,6 +201,7 @@ private:
 
 	bool start_landing = false;
 	bool cancel_landing = false;
+	bool commit_conditions = false;
 	bool landed = false;
 
 	Mode current_mode;
@@ -209,6 +215,7 @@ private:
 	uint64_t get_current_time();
 	double get_duration_s(uint64_t time1, uint64_t time2);
 	double time_since_landing_pad_detection_s();
+	double time_since_last_aim_gimbal_s();
 	double time_in_state_s();
 
 	double constrain(double input, double min, double max);
@@ -218,9 +225,11 @@ private:
 	bool state_max_time_reached();
 	bool landing_pad_detection();	// not edge, but state of being visible
 	bool aimed();
+	bool aligned();
 	bool close();
 	bool yaw_aligned();
 	bool horizontally_aligned();
+	bool reached_commit_conditions();
 	bool get_landed();
 	bool objective_reached();
 	bool objective_lost();
@@ -236,7 +245,9 @@ public:
 	double get_zoom_factor();
 	void get_gimbal_control_effort(double& tilt, double& pan);
 	void get_flight_control_effort(double& forward, double& right, double& up, double& yaw_rate_cw);
+	bool periodic_reset_down();
 	
+	void set_commit_conditions(bool);
 	void set_landed(bool new_landed);
 	
 	bool get_start_landing();
@@ -269,14 +280,19 @@ bool ControlPolicy::change_mode( Mode new_mode )
 		// special actions
 		switch( current_mode )
 		{
+			case MODE_AIM_CAMERA:
+				last_aim_gimbal_time = get_current_time();
 			case MODE_DESCENT_ZOOM_OUT:
 			case MODE_HORIZONTAL_ALIGNMENT:
 				break;
 			case MODE_DESCENT:
 				start_landing = true;
 				cancel_landing = false;
+				commit_conditions = false;
 				cout << "setting start_landing to true" << endl;
 				break;
+			case MODE_COMMIT:
+				start_landing = true;
 			default:
 				//cout << "no special actions for mode " << mode_names[current_mode] << endl;
 				break;
@@ -318,6 +334,11 @@ double ControlPolicy::time_since_landing_pad_detection_s()
 	return get_duration_s( get_current_time(), last_landing_pad_detection_time );
 }
 
+double ControlPolicy::time_since_last_aim_gimbal_s()
+{
+	return get_duration_s( get_current_time(), last_aim_gimbal_time );
+}
+
 ControlPolicy::ControlPolicy()
 {
 	previous_mode = MODE_START;
@@ -340,17 +361,18 @@ ControlPolicy::ControlPolicy()
 
 	mode_parameters[MODE_START] 			= {0.0,	0.0, 0.0, 0.0, GIMBAL_NO_CHANGE, 0.0,	0.0, 0.0, 0.0, ZOOM_NONE};
 	mode_parameters[MODE_STATIC_SEARCH]		= {0.0,	0.0, 0.0, 0.0, GIMBAL_NO_CHANGE, 0.0,	0.0, 0.0, 2.0, ZOOM_NONE};
-	mode_parameters[MODE_SEARCH_DOWN] 		= {0.0,	0.0, 0.0, yaw_rate_search, GIMBAL_ACTIVE, -tilt_rate_search, -90.0, 0.0, 10.0, ZOOM_NONE};
-	mode_parameters[MODE_SEARCH_UP] 		= {0.0,	0.0, 0.0, yaw_rate_search, GIMBAL_ACTIVE, tilt_rate_search,  90.0, 0.0, 9.5, ZOOM_NONE};
-	mode_parameters[MODE_AIM_CAMERA] 		= {0.0,	0.0, 0.0, yaw_scalar_aim,  GIMBAL_ACTIVE, tilt_scalar_aim, pan_scalar_aim, 0.0, -1.0, ZOOM_AUTO};
-	mode_parameters[MODE_APPROACH]			= {approach_forward_scalar, approach_right_scalar, 0.0, 0.0, GIMBAL_ACTIVE, tilt_scalar_aim, pan_scalar_aim, 0.0, -1.0, ZOOM_AUTO};
-	mode_parameters[MODE_YAW_ALIGNMENT]		= {0.0,	0.0, 0.0, yaw_align_scalar, GIMBAL_ACTIVE, 0.0, 0.0, 0.0, -1.0, ZOOM_AUTO};
+	mode_parameters[MODE_SEARCH_DOWN] 		= {0.0,	0.0, 0.0, yaw_rate_search, GIMBAL_SPEED, -tilt_rate_search, -90.0, 0.0, 10.0, ZOOM_NONE};
+	mode_parameters[MODE_SEARCH_UP] 		= {0.0,	0.0, 0.0, yaw_rate_search, GIMBAL_SPEED, tilt_rate_search,  90.0, 0.0, 9.5, ZOOM_NONE};
+	mode_parameters[MODE_AIM_CAMERA] 		= {0.0,	0.0, 0.0, 0.0,  GIMBAL_ANGLE, 1.2, 1.2, 2.0, -1.0, ZOOM_AUTO};
+	mode_parameters[MODE_ALIGN]	 		= {0.0,	0.0, 0.0, yaw_scalar_aim,  GIMBAL_SPEED, tilt_scalar_aim, pan_scalar_aim, 0.0, -1.0, ZOOM_AUTO};
+	mode_parameters[MODE_APPROACH]			= {approach_forward_scalar, approach_right_scalar, 0.0, 0.0, GIMBAL_SPEED, tilt_scalar_aim, pan_scalar_aim, 0.0, -1.0, ZOOM_AUTO};
+	mode_parameters[MODE_YAW_ALIGNMENT]		= {0.0,	0.0, 0.0, yaw_align_scalar, GIMBAL_DOWN, tilt_scalar_aim, pan_scalar_aim, 0.0, -1.0, ZOOM_AUTO};
 	mode_parameters[MODE_HORIZONTAL_ALIGNMENT]	= {horizontal_align_scalar, horizontal_align_scalar, 0.0, 0.0, GIMBAL_DOWN, 0.0, 0.0, 0.0, -1.0, ZOOM_NONE};
 	mode_parameters[MODE_ZOOM_OUT]			= {0.0,	0.0, 0.0, 0.0, GIMBAL_NO_CHANGE, 0.0, 0.0, 0.0, 5.0, ZOOM_OUT};
 	mode_parameters[MODE_DESCENT]			= {0.0,	0.0, descent_velocity, 0.0, GIMBAL_DOWN, 0.0, 0.0, 0.0, -1.0, ZOOM_AUTO};
 	mode_parameters[MODE_DESCENT_ZOOM_OUT]		= {0.0,	0.0, 0.0, 0.0, GIMBAL_DOWN, 0.0, 0.0, 0.0, 5.0, ZOOM_OUT};
 	mode_parameters[MODE_ASCENT]			= {0.0,	0.0, ascent_velocity, 0.0, GIMBAL_DOWN, 0.0, 0.0, 0.0, 5.0, ZOOM_NONE};
-	mode_parameters[MODE_COMMIT]			= {0.0,	0.0, 0.0, 0.0, GIMBAL_FORWARD, 0.0, 0.0, 0.0, -1.0, ZOOM_NONE};
+	mode_parameters[MODE_COMMIT]			= {0.0,	0.0, 0.0, 0.0, GIMBAL_DOWN, 0.0, 0.0, 0.0, -1.0, ZOOM_NONE};
 	mode_parameters[MODE_LANDED]			= {0.0,	0.0, 0.0, 0.0, GIMBAL_NO_CHANGE, 0.0, 0.0, 0.0, -1.0, ZOOM_NONE};
 
 	cout << "CONTROL POLICY SUMMARY" << endl
@@ -417,7 +439,19 @@ bool ControlPolicy::aimed()
 {
 	bool result = false;
 
-	if( abs(theta_v) < 3.0 && theta_pan < 3.0 )
+	if( abs(theta_u) < 3.0 && abs(theta_v) < 3.0 )
+	{
+		result = true;
+	}
+
+	return result;
+}
+
+bool ControlPolicy::aligned()
+{
+	bool result = false;
+
+	if( abs(theta_u) < 3.0 && abs(theta_pan) < 3.0 )
 	{
 		result = true;
 	}
@@ -430,7 +464,7 @@ bool ControlPolicy::close()
 	bool result = false;
 
 //	if( theta_pan < 3 && theta_tilt < -84 )
-	if( theta_pan < 3 && abs(theta_tilt + 90) < 6 )
+	if( theta_pan < 3 && abs(theta_tilt + 90) < 3 )
 	{
 		result = true;
 	}
@@ -455,7 +489,7 @@ bool ControlPolicy::horizontally_aligned()
 	bool result = false;
 
 //	if( abs(theta_pan) < 7 && theta_tilt < -88 && theta_tilt > -92 )
-	if( abs(theta_pan) < 2 && abs(theta_tilt + 90) < 1 )
+	if( abs(theta_pan) < 2 && abs(theta_tilt + 90) < 2 )
 	{
 		result = true;
 	}
@@ -466,6 +500,17 @@ bool ControlPolicy::horizontally_aligned()
 void ControlPolicy::set_landed(bool new_landed)
 {
 	landed = new_landed;
+}
+
+bool ControlPolicy::reached_commit_conditions()
+{
+//	return zoom_factor < 2;
+	return commit_conditions;
+}
+
+void ControlPolicy::set_commit_conditions( bool conditions )
+{
+	commit_conditions = conditions;
 }
 
 bool ControlPolicy::get_landed()
@@ -509,6 +554,10 @@ bool ControlPolicy::objective_reached()
 		case MODE_AIM_CAMERA:
 			result = aimed();
 			break;
+		
+		case MODE_ALIGN:
+			result = aligned();
+			break;
 
 		case MODE_APPROACH:
 			result = close();
@@ -523,7 +572,14 @@ bool ControlPolicy::objective_reached()
 			break;
 
 		case MODE_DESCENT:
+			result = reached_commit_conditions();
+			break;
+
+		case MODE_COMMIT:
 			result = get_landed();
+			break;
+
+		case MODE_LANDED:
 			break;
 
 		default:
@@ -543,6 +599,7 @@ bool ControlPolicy::objective_lost()
 		case MODE_SEARCH_DOWN:
 		case MODE_SEARCH_UP:
 		case MODE_AIM_CAMERA:
+		case MODE_ALIGN:
 		case MODE_APPROACH:
 		case MODE_YAW_ALIGNMENT:
 		case MODE_HORIZONTAL_ALIGNMENT:
@@ -590,6 +647,7 @@ void ControlPolicy::update()
 					break;
 
 				case MODE_AIM_CAMERA:
+				case MODE_ALIGN:
 					break;
 
 				case MODE_ZOOM_OUT:
@@ -602,6 +660,10 @@ void ControlPolicy::update()
 
 				case MODE_ASCENT:
 					change_mode( MODE_STATIC_SEARCH );
+					break;
+
+				case MODE_COMMIT:
+				case MODE_LANDED:
 					break;
 
 				default:
@@ -620,6 +682,7 @@ void ControlPolicy::update()
 					break;
 				
 				case MODE_AIM_CAMERA:
+				case MODE_ALIGN:
 				case MODE_APPROACH:
 				case MODE_YAW_ALIGNMENT:
 				case MODE_HORIZONTAL_ALIGNMENT:
@@ -630,10 +693,10 @@ void ControlPolicy::update()
 					break;
 
 				case MODE_DESCENT:
-					if( zoom_factor > 2 )
-					{
+//					if( zoom_factor > 2 )
+//					{
 						change_mode( MODE_DESCENT_ZOOM_OUT );
-					}
+//					}
 					break;
 
 				case MODE_LANDED:
@@ -652,16 +715,18 @@ void ControlPolicy::update()
 				case MODE_SEARCH_DOWN:
 				case MODE_SEARCH_UP:
 				case MODE_AIM_CAMERA:
+				case MODE_ALIGN:
 				case MODE_APPROACH:
 				case MODE_YAW_ALIGNMENT:
 				case MODE_HORIZONTAL_ALIGNMENT:
 					break;
 				case MODE_DESCENT:
-					if( zoom_factor > 2 )
-					{
+//					if( zoom_factor > 2 )
+//					{
 						change_mode( MODE_HORIZONTAL_ALIGNMENT );
-					}
+//					}
 				case MODE_COMMIT:
+				case MODE_LANDED:
 					break;
 				default:
 					cout << "no objective lost rule for mode " << mode_names[current_mode] << endl;
@@ -679,6 +744,10 @@ void ControlPolicy::update()
 					break;
 
 				case MODE_AIM_CAMERA:
+					change_mode( MODE_ALIGN );
+					break;
+				
+				case MODE_ALIGN:
 					change_mode( MODE_APPROACH );
 					break;
 
@@ -695,6 +764,10 @@ void ControlPolicy::update()
 					break;
 				
 				case MODE_DESCENT:
+					change_mode( MODE_COMMIT );
+					break;
+
+				case MODE_COMMIT:
 					change_mode( MODE_LANDED );
 					break;
 
@@ -715,6 +788,7 @@ void ControlPolicy::update()
 					break;
 				
 				case MODE_AIM_CAMERA:
+				case MODE_ALIGN:
 				case MODE_APPROACH:
 				case MODE_YAW_ALIGNMENT:
 				case MODE_HORIZONTAL_ALIGNMENT:
@@ -770,6 +844,40 @@ void ControlPolicy::update_gimbal_orientation(uint64_t time, double tilt)
 	gimbal_tilt = tilt;
 }
 
+//void ControlPolicy::get_gimbal_control_effort(double& tilt, double& pan)
+//{
+//	pan  = 0;
+//	tilt = 0;
+//
+//	switch( current_mode )
+//	{
+//		case MODE_STATIC_SEARCH:
+//			break;
+//		case MODE_SEARCH_DOWN:
+//			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar * zoom_factor;
+//			break;
+//		case MODE_SEARCH_UP:
+//			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar * zoom_factor;
+//			break;
+//		case MODE_AIM_CAMERA:
+//		case MODE_APPROACH:
+//		case MODE_YAW_ALIGNMENT:
+//			pan  =  mode_parameters[current_mode].gimbal_pan_right_scalar * theta_u * zoom_factor / 2.0;
+//			tilt = -mode_parameters[current_mode].gimbal_tilt_up_scalar   * theta_v * zoom_factor / 2.0;
+//			break;
+//		case MODE_ZOOM_OUT:
+//		case MODE_HORIZONTAL_ALIGNMENT:
+//		case MODE_DESCENT:
+//		case MODE_DESCENT_ZOOM_OUT:
+//		case MODE_ASCENT:
+//		case MODE_COMMIT:
+//		case MODE_LANDED:
+//			break;
+//		default:
+//			cout << "no gimbal control effort rule for mode " << mode_names[current_mode] << endl;
+//	}
+//}
+
 void ControlPolicy::get_gimbal_control_effort(double& tilt, double& pan)
 {
 	pan  = 0;
@@ -780,17 +888,26 @@ void ControlPolicy::get_gimbal_control_effort(double& tilt, double& pan)
 		case MODE_STATIC_SEARCH:
 			break;
 		case MODE_SEARCH_DOWN:
-			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar * zoom_factor;
+			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar;
 			break;
 		case MODE_SEARCH_UP:
-			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar * zoom_factor;
+			tilt = mode_parameters[current_mode].gimbal_tilt_up_scalar;
 			break;
 		case MODE_AIM_CAMERA:
-		case MODE_APPROACH:
-		case MODE_YAW_ALIGNMENT:
-			pan  =  mode_parameters[current_mode].gimbal_pan_right_scalar * theta_u * zoom_factor / 2.0;
-			tilt = -mode_parameters[current_mode].gimbal_tilt_up_scalar   * theta_v * zoom_factor / 2.0;
+			if( time_since_last_aim_gimbal_s() > 1.0 )
+			{
+				last_aim_gimbal_time = get_current_time();
+
+				pan  =  mode_parameters[current_mode].gimbal_pan_right_scalar * theta_u;
+				tilt = -mode_parameters[current_mode].gimbal_tilt_up_scalar   * theta_v;
+			}
 			break;
+		case MODE_ALIGN:
+		case MODE_APPROACH:
+			pan  =  mode_parameters[current_mode].gimbal_pan_right_scalar * theta_u;
+			tilt = -mode_parameters[current_mode].gimbal_tilt_up_scalar   * theta_v;
+			break;
+		case MODE_YAW_ALIGNMENT:
 		case MODE_ZOOM_OUT:
 		case MODE_HORIZONTAL_ALIGNMENT:
 		case MODE_DESCENT:
@@ -802,6 +919,17 @@ void ControlPolicy::get_gimbal_control_effort(double& tilt, double& pan)
 		default:
 			cout << "no gimbal control effort rule for mode " << mode_names[current_mode] << endl;
 	}
+}
+
+bool ControlPolicy::periodic_reset_down()
+{
+	bool result = false;
+	if( time_since_last_aim_gimbal_s() > 1.0 )
+	{
+		result = true;
+		last_aim_gimbal_time = get_current_time();
+	}
+	return result;
 }
 
 void ControlPolicy::get_flight_control_effort(double& forward, double& right, double& up, double& yaw_rate_cw)
@@ -824,6 +952,8 @@ void ControlPolicy::get_flight_control_effort(double& forward, double& right, do
 			yaw_rate_cw = mode_parameters[current_mode].yaw_rate_cw_scalar;
 			break;
 		case MODE_AIM_CAMERA:
+			break;
+		case MODE_ALIGN:
 			yaw_rate_cw = theta_pan * mode_parameters[current_mode].yaw_rate_cw_scalar;
 			break;
 		case MODE_ZOOM_OUT:
@@ -842,9 +972,9 @@ void ControlPolicy::get_flight_control_effort(double& forward, double& right, do
 			right   =  0.1 * theta_u;
 			break;
 		case MODE_DESCENT:
-//			forward = -0.1 * theta_v;
-//			right   =  0.1 * theta_u;
-//			up      = -0.5;
+			forward = -0.05 * theta_v;
+			right   =  0.05 * theta_u;
+			up      = -0.5;
 			break;
 		case MODE_DESCENT_ZOOM_OUT:
 			break;

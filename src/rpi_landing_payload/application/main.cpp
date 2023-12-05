@@ -46,7 +46,7 @@
 
 #define THERMAL_CAMERA_ROTATION_SCALAR 1.0
 
-#define LOG 0
+#define LOG 1
 
 // standard includes
 #include <csignal>
@@ -612,6 +612,9 @@ void* logging_thread_function(void* args)
 	std::string filename;
 
 	std::ofstream output_file;
+	uint64_t start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+	std::string delimiter = "\t";
 
 	while(running)
 	{
@@ -621,56 +624,60 @@ void* logging_thread_function(void* args)
 
 		if(      control_policy.get_mode() != MODE_LANDED && !output_file.is_open() )
 		{
+			start_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
 			filename = log_directory + "log_" + std::to_string( gps_time ) + ".csv";
 			output_file.open(filename);
 
 			cout << "Opened log file: " << filename << endl;
 
 			// output headers
-			output_file << "gps_time"
-				    << ","
+			output_file << "system_time"
+				    << delimiter
+			            << "gps_time"
+				    << delimiter
 				    << "gps_position_x" 
-				    << ","
+				    << delimiter
 				    << "gps_position_y" 
-				    << ","
+				    << delimiter
 				    << "gps_position_z" 
-				    << ","
+				    << delimiter
 				    << "gps_velocity_x" 
-				    << ","
+				    << delimiter
 				    << "gps_velocity_y" 
-				    << ","
+				    << delimiter
 				    << "gps_velocity_z" 
-				    << ","
+				    << delimiter
 				    << "gimbal_tilt"
-				    << ","
+				    << delimiter
 				    << "gimbal_relative_yaw"
-				    << ","
+				    << delimiter
 				    << "stream_source"
-				    << ","
+				    << delimiter
 				    << "zoom_factor"
-				    << ","
+				    << delimiter
 				    << "theta_u"
-				    << ","
+				    << delimiter
 				    << "theta_v"
-				    << ","
+				    << delimiter
 				    << "landing_pad_pan"
-				    << ","
+				    << delimiter
 				    << "landing_pad_tilt"
-				    << ","
+				    << delimiter
 				    << "autonomous_control_enabled"
-				    << ","
+				    << delimiter
 				    << "mode"
-				    << ","
+				    << delimiter
 				    << "control_effort_gimbal_tilt"
-				    << ","
+				    << delimiter
 				    << "control_effort_gimbal_pan"
-				    << ","
+				    << delimiter
 				    << "control_effort_forward"
-				    << ","
+				    << delimiter
 				    << "control_effort_right"
-				    << ","
+				    << delimiter
 				    << "control_effort_up"
-				    << ","
+				    << delimiter
 				    << "control_effort_yaw_cw"
 				    << endl;
 		}
@@ -697,50 +704,55 @@ void* logging_thread_function(void* args)
 				stream_source_name = "ir";
 			}
 
-			output_file << gps_time
-				    << ","
+			uint64_t system_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+			double system_time_d = (system_time - start_time) / 1e6;
+
+			output_file << system_time_d
+				    << delimiter
+				    << gps_time
+				    << delimiter
 				    << gps_position.x
-				    << ","
+				    << delimiter
 				    << gps_position.y
-				    << ","
+				    << delimiter
 				    << gps_position.z
-				    << ","
+				    << delimiter
 				    << gps_velocity.x
-				    << ","
+				    << delimiter
 				    << gps_velocity.y
-				    << ","
+				    << delimiter
 				    << gps_velocity.z
-				    << ","
+				    << delimiter
 				    << gimbal_tilt
-				    << ","
+				    << delimiter
 				    << gimbal_relative_yaw
-				    << ","
+				    << delimiter
 				    << stream_source_name
-				    << ","
+				    << delimiter
 				    << zoom_factor
-				    << ","
+				    << delimiter
 				    << theta_u
-				    << ","
+				    << delimiter
 				    << theta_v
-				    << ","
+				    << delimiter
 				    << landing_pad_pan
-				    << ","
+				    << delimiter
 				    << landing_pad_tilt
-				    << ","
+				    << delimiter
 				    << autonomous_control
-				    << ","
+				    << delimiter
 				    << current_mode_name
-				    << ","
+				    << delimiter
 				    << control_effort_gimbal_tilt
-				    << ","
+				    << delimiter
 				    << control_effort_gimbal_pan
-				    << ","
+				    << delimiter
 				    << control_effort_forward
-				    << ","
+				    << delimiter
 				    << control_effort_right
-				    << ","
+				    << delimiter
 				    << control_effort_up
-				    << ","
+				    << delimiter
 				    << control_effort_yaw_cw
 				    << endl;
 		}
@@ -784,6 +796,12 @@ void* control_policy_update_function(void* args)
 		{
 			control_policy.update_zoom_factor( 1.0 );
 		}
+
+//		bool commit_conditions = control_policy.get_zoom_factor() < 2.0;
+		bool commit_conditions = control_policy.get_zoom_factor() < 2.0 && apriltag_detection_area > 0.0325;
+//					else if( apriltag_detection_area != 0 && apriltag_detection_area > 0.0325 )
+//		cout << "commit: " << commit_conditions << endl;
+		control_policy.set_commit_conditions( commit_conditions );
 
 		current_mode_name = short_mode_names[control_policy.get_mode()];
 
@@ -1310,16 +1328,16 @@ void* flight_control_function(void* args)
 				
 
 			// announce the control efforts
-//			cout << "Controlling joysticks with FRUY = {"
-//			     << forward
-//			     << ", "
-//			     << right
-//			     << ", "
-//			     << up
-//			     << ", "
-//			     << yaw_rate_cw
-//			     << "}"
-//			     << endl;
+			cout << "Controlling joysticks with FRUY = {"
+			     << forward
+			     << ", "
+			     << right
+			     << ", "
+			     << up
+			     << ", "
+			     << yaw_rate_cw
+			     << "}"
+			     << endl;
 
 			// set the mode to be velocities relative to body coordinates with stable mode enabled
 			T_DjiFlightControllerJoystickMode joystickMode =
@@ -1517,7 +1535,7 @@ void* gimbal_control_function(void* args)
 		{
 			gimbal_policy = control_policy.get_gimbal_policy();
 
-			if( gimbal_policy == GIMBAL_ACTIVE )
+			if( gimbal_policy == GIMBAL_SPEED )
 			{
 				gimbal_reset_vertically_down_flag = false;
 				double gimbal_tilt_control_effort;
@@ -1553,6 +1571,9 @@ void* gimbal_control_function(void* args)
 				    dji_f64_t time;				// Expected execution time of gimbal rotation, unit: second.
 				} T_DjiGimbalManagerRotation;
 				*/
+
+				double active_zoom_factor = control_policy.get_zoom_factor();
+
 				T_DjiGimbalManagerRotation rotation;
 				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_SPEED;
 				rotation.roll = 0.0;
@@ -1560,16 +1581,24 @@ void* gimbal_control_function(void* args)
 				rotation.yaw   = (float) gimbal_pan_control_effort;
 				rotation.pitch = (float) gimbal_tilt_control_effort;
 				
-				control_effort_gimbal_tilt = rotation.pitch;
-				control_effort_gimbal_pan  = rotation.yaw;
+//				control_effort_gimbal_tilt = rotation.pitch * active_zoom_factor;
+//				control_effort_gimbal_pan  = rotation.yaw   * active_zoom_factor;
 
 				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 				{
 					rotation.yaw   *= THERMAL_CAMERA_ROTATION_SCALAR;
 					rotation.pitch *= THERMAL_CAMERA_ROTATION_SCALAR;
 				}
-
-
+				else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_WIDE_CAM )
+				{
+					rotation.yaw   *= 0.5;
+					rotation.pitch *= 0.5;
+				}
+				else if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_ZOOM_CAM )
+				{
+					rotation.yaw   *= (active_zoom_factor - 1) * 0.8;
+					rotation.pitch *= (active_zoom_factor - 1) * 0.8;
+				}
 
 	//			cout << "( " << gimbal_pan_control_effort << " , " << gimbal_tilt_control_effort << " )" << endl;
 
@@ -1579,10 +1608,101 @@ void* gimbal_control_function(void* args)
 					cerr << "error moving the gimbal!" << endl;
 				}
 			}
+			else if( gimbal_policy == GIMBAL_ANGLE )
+			{
+				gimbal_reset_vertically_down_flag = false;
+				double gimbal_tilt_control_effort;
+				double gimbal_pan_control_effort;
+				control_policy.get_gimbal_control_effort(gimbal_tilt_control_effort, gimbal_pan_control_effort);
+
+//				fcu_subscription_mutex.lock();
+//				if( gimbal_tilt <= -90 )
+//				{
+//					gimbal_tilt_control_effort = gimbal_tilt_control_effort > 0 ? gimbal_tilt_control_effort : 0;
+//				}
+//				else if( gimbal_tilt >= 0 )
+//				{
+//					gimbal_tilt_control_effort = gimbal_tilt_control_effort < 0 ? gimbal_tilt_control_effort : 0;
+//				}
+//
+//				if( gimbal_relative_yaw <= -90 )
+//				{
+//					gimbal_pan_control_effort = gimbal_pan_control_effort > 0 ? gimbal_pan_control_effort : 0;
+//				}
+//				else if( gimbal_relative_yaw >= 90 )
+//				{
+//					gimbal_pan_control_effort = gimbal_pan_control_effort < 0 ? gimbal_pan_control_effort : 0;
+//				}
+//				fcu_subscription_mutex.unlock();
+
+				/*
+				typedef struct {
+				    E_DjiGimbalRotationMode rotationMode;	// Gimbal rotation mode
+				    dji_f32_t pitch;				// Pitch angle in degree, unit: deg
+				    dji_f32_t roll;				// Roll angle in degree, unit: deg
+				    dji_f32_t yaw;				// Yaw angle in degree, unit: deg
+				    dji_f64_t time;				// Expected execution time of gimbal rotation, unit: second.
+				} T_DjiGimbalManagerRotation;
+				*/
+
+				double active_zoom_factor = control_policy.get_zoom_factor();
+
+				T_DjiGimbalManagerRotation rotation;
+				rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+				rotation.roll = 0.0;
+				rotation.time = 1.0;	// do not increase this too much because then the rotation command blocks for longer
+				rotation.yaw   = (float) gimbal_pan_control_effort;
+				rotation.pitch = (float) gimbal_tilt_control_effort;
+				
+				control_effort_gimbal_tilt = rotation.pitch * active_zoom_factor;
+				control_effort_gimbal_pan  = rotation.yaw   * active_zoom_factor;
+
+//				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+//				{
+//					rotation.yaw   *= THERMAL_CAMERA_ROTATION_SCALAR;
+//					rotation.pitch *= THERMAL_CAMERA_ROTATION_SCALAR;
+//				}
+
+	//			cout << "( " << gimbal_pan_control_effort << " , " << gimbal_tilt_control_effort << " )" << endl;
+
+				if( gimbal_pan_control_effort != 0 || gimbal_tilt_control_effort != 0 )
+				{
+					returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+					{
+						cerr << "error moving the gimbal!" << endl;
+					}
+				}
+			}
 			else if( gimbal_policy == GIMBAL_FORWARD )
 			{
 				gimbal_reset_vertically_down_flag = false;
 				returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_AND_YAW);
+				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+				{
+					USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
+				}
+			}
+			else if( gimbal_policy == GIMBAL_DOWN && control_policy.periodic_reset_down() )
+			{
+				cout << "resetting gimbal vertically down" << endl;
+				if( gimbal_tilt >= 0 )
+				{
+					T_DjiGimbalManagerRotation rotation;
+					rotation.rotationMode = DJI_GIMBAL_ROTATION_MODE_RELATIVE_ANGLE;
+					rotation.roll  =   0.00;
+					rotation.time  =   0.05;	// do not increase this too much because then the rotation command blocks for longer
+					rotation.yaw   =   0.00;
+					rotation.pitch = -(gimbal_tilt + 10);
+
+					returnCode = DjiGimbalManager_Rotate(gimbal_mount_position, rotation);
+					if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
+					{
+						cerr << "error moving the gimbal!" << endl;
+					}
+				}
+
+				returnCode = DjiGimbalManager_Reset(gimbal_mount_position, DJI_GIMBAL_RESET_MODE_PITCH_DOWNWARD_UPWARD_AND_YAW);
 				if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 				{
 					USER_LOG_ERROR("Reset gimbal failed, error code: 0x%08X", returnCode);
