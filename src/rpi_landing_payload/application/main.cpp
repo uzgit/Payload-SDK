@@ -681,11 +681,7 @@ void* logging_thread_function(void* args)
 				    << "control_effort_yaw_cw"
 				    << endl;
 		}
-		else if( control_policy.get_mode() == MODE_LANDED && output_file.is_open() )
-		{
-			output_file.close();
-			cout << "Closed log file: " << filename << endl;
-		}
+		
 		
 		if( output_file.is_open() )
 		{
@@ -756,6 +752,13 @@ void* logging_thread_function(void* args)
 				    << control_effort_yaw_cw
 				    << endl;
 		}
+		
+		if( control_policy.get_mode() == MODE_LANDED && output_file.is_open() )
+		{
+			output_file.close();
+			cout << "Closed log file: " << filename << endl;
+		}
+
 #endif
 		std::chrono::milliseconds sleep_duration(200);
 		std::this_thread::sleep_for(sleep_duration);
@@ -1581,8 +1584,8 @@ void* gimbal_control_function(void* args)
 				rotation.yaw   = (float) gimbal_pan_control_effort;
 				rotation.pitch = (float) gimbal_tilt_control_effort;
 				
-//				control_effort_gimbal_tilt = rotation.pitch * active_zoom_factor;
-//				control_effort_gimbal_pan  = rotation.yaw   * active_zoom_factor;
+				control_effort_gimbal_tilt = rotation.pitch;
+				control_effort_gimbal_pan  = rotation.yaw;
 
 				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 				{
@@ -1653,9 +1656,13 @@ void* gimbal_control_function(void* args)
 				rotation.time = 1.0;	// do not increase this too much because then the rotation command blocks for longer
 				rotation.yaw   = (float) gimbal_pan_control_effort;
 				rotation.pitch = (float) gimbal_tilt_control_effort;
-				
-				control_effort_gimbal_tilt = rotation.pitch * active_zoom_factor;
-				control_effort_gimbal_pan  = rotation.yaw   * active_zoom_factor;
+		
+				// for logging	
+				if( rotation.pitch != 0 || rotation.yaw != 0 )
+				{
+					control_effort_gimbal_tilt = rotation.pitch;
+					control_effort_gimbal_pan  = rotation.yaw;
+				}
 
 //				if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
 //				{
@@ -2177,10 +2184,10 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	cvtColor(mat, gray, COLOR_BGR2GRAY);
 
 	// we have to handle IR images differently
-	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
-	{
-		cv::bitwise_not(gray, gray);
-	}
+//	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+//	{
+//		cv::bitwise_not(gray, gray);
+//	}
 
 	image_u8_t im = { .width = gray.cols,
 	                  .height = gray.rows,

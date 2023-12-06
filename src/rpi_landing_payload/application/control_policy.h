@@ -278,6 +278,11 @@ bool ControlPolicy::change_mode( Mode new_mode )
 		result = true;
 		
 		// special actions
+		if( current_mode == MODE_DESCENT && new_mode != MODE_DESCENT && new_mode != MODE_COMMIT )
+		{
+			start_landing  = false;
+			cancel_landing = true;
+		}	
 		switch( current_mode )
 		{
 			case MODE_AIM_CAMERA:
@@ -625,6 +630,17 @@ void ControlPolicy::update()
 	{
 		change_mode( MODE_STATIC_SEARCH );
 	}
+
+	// *********************************************************************
+	else if( current_mode == MODE_COMMIT )
+	{
+		if( objective_reached() )
+		{
+			change_mode( MODE_LANDED );
+		}
+	}
+
+	// *********************************************************************
 
 	// handle mode switches
 	if( state_min_time_reached() )
