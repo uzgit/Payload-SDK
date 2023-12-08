@@ -45,6 +45,7 @@
 #define SENSOR_HEIGHT_IR 6.144
 
 #define THERMAL_CAMERA_ROTATION_SCALAR 1.0
+#define INVERT_BW 1
 
 #define LOG 1
 
@@ -154,6 +155,7 @@ pthread_t gimbal_control_thread;
 E_DjiMountPosition gimbal_mount_position = DJI_MOUNT_POSITION_PAYLOAD_PORT_NO1;
 E_DjiGimbalMode gimbal_mode = DJI_GIMBAL_MODE_YAW_FOLLOW;
 mutex apriltag_detection_mutex;
+int u,v;
 double u_n, v_n;
 uint64_t landing_pad_detection_time;
 double theta_u, theta_v; // relative to the camera
@@ -648,13 +650,27 @@ void* logging_thread_function(void* args)
 				    << delimiter
 				    << "gps_velocity_z" 
 				    << delimiter
+				    << "aircraft_heading" 
+				    << delimiter
 				    << "gimbal_tilt"
+				    << delimiter
+				    << "gimbal_heading"
+				    << delimiter
+				    << "gimbal_heading_offset"
 				    << delimiter
 				    << "gimbal_relative_yaw"
 				    << delimiter
 				    << "stream_source"
 				    << delimiter
 				    << "zoom_factor"
+				    << delimiter
+				    << "u"
+				    << delimiter
+				    << "v"
+				    << delimiter
+				    << "u_n"
+				    << delimiter
+				    << "v_n"
 				    << delimiter
 				    << "theta_u"
 				    << delimiter
@@ -663,6 +679,10 @@ void* logging_thread_function(void* args)
 				    << "landing_pad_pan"
 				    << delimiter
 				    << "landing_pad_tilt"
+				    << delimiter
+				    << "landing_pad_yaw"
+				    << delimiter
+				    << "aim_gimbal"
 				    << delimiter
 				    << "autonomous_control_enabled"
 				    << delimiter
@@ -719,13 +739,27 @@ void* logging_thread_function(void* args)
 				    << delimiter
 				    << gps_velocity.z
 				    << delimiter
+				    << aircraft_yaw
+				    << delimiter
 				    << gimbal_tilt
+				    << delimiter
+				    << gimbal_angles.z
+				    << delimiter
+				    << gimbal_heading_offset
 				    << delimiter
 				    << gimbal_relative_yaw
 				    << delimiter
 				    << stream_source_name
 				    << delimiter
 				    << zoom_factor
+				    << delimiter
+				    << u
+				    << delimiter
+				    << v 
+				    << delimiter
+				    << u_n
+				    << delimiter
+				    << v_n
 				    << delimiter
 				    << theta_u
 				    << delimiter
@@ -734,6 +768,10 @@ void* logging_thread_function(void* args)
 				    << landing_pad_pan
 				    << delimiter
 				    << landing_pad_tilt
+				    << delimiter
+				    << landing_pad_yaw
+				    << delimiter
+				    << aim_gimbal
 				    << delimiter
 				    << autonomous_control
 				    << delimiter
@@ -2183,11 +2221,13 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 	cv::Mat gray;
 	cvtColor(mat, gray, COLOR_BGR2GRAY);
 
+#if INVERT_BW
 	// we have to handle IR images differently
-//	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
-//	{
-//		cv::bitwise_not(gray, gray);
-//	}
+	if( current_stream_source == DJI_CAMERA_MANAGER_SOURCE_IR_CAM )
+	{
+		cv::bitwise_not(gray, gray);
+	}
+#endif
 
 	image_u8_t im = { .width = gray.cols,
 	                  .height = gray.rows,
@@ -2269,6 +2309,8 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 
 	}
 #endif
+	u = 0;
+	v = 0;
 	if( zarray_size(detections) > 0 )
 	{
 		landing_pad_detection_time = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -2278,8 +2320,8 @@ static void apriltag_image_callback(CameraRGBImage img, void *userData)
 		// CW > 0, CCW < 0
 		landing_pad_yaw = atan2( apriltag_detection.H->data[3], apriltag_detection.H->data[0] ) * RAD_TO_DEG;
 
-		int u = apriltag_detection.c[0];
-		int v = apriltag_detection.c[1];
+		u = apriltag_detection.c[0];
+		v = apriltag_detection.c[1];
 		u_n = (u - global_image_half_width)  / global_image_half_width;
 		v_n = (v - global_image_half_height) / global_image_half_height;
 
