@@ -62,7 +62,7 @@
 #define WIDGET_SPEAKER_AUDIO_OPUS_DECODE_BITRATE_8KBPS     (8000)
 
 /* The speaker initialization parameters */
-#define WIDGET_SPEAKER_DEFAULT_VOLUME                (30)
+#define WIDGET_SPEAKER_DEFAULT_VOLUME                (60)
 #define EKHO_INSTALLED                               (1)
 
 /* Private types -------------------------------------------------------------*/
@@ -322,7 +322,9 @@ static T_DjiReturnCode DjiTest_PlayTtsData(void)
     }
 
     if (aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M3E ||
-        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M3T) {
+        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M3T ||
+        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M3D ||
+        aircraftInfoBaseInfo.aircraftType == DJI_AIRCRAFT_TYPE_M3TD) {
         return DjiTest_PlayAudioData();
     } else {
         txtFile = fopen(WIDGET_SPEAKER_TTS_FILE_NAME, "r");

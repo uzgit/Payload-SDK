@@ -57,7 +57,7 @@
 
 /* Private constants ---------------------------------------------------------*/
 #define DJI_LOG_PATH                    "Logs/DJI"
-#define DJI_LOG_INDEX_FILE_NAME         "Logs/latest"
+#define DJI_LOG_INDEX_FILE_NAME         "Logs/index"
 #define DJI_LOG_FOLDER_NAME             "Logs"
 #define DJI_LOG_PATH_MAX_SIZE           (128)
 #define DJI_LOG_FOLDER_NAME_MAX_SIZE    (32)
@@ -143,9 +143,9 @@ int main(int argc, char **argv)
         if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
             USER_LOG_ERROR("get aircraft version info error");
         } else {
-            USER_LOG_INFO("Aircraft version is V%d.%d.%d.%d", aircraftInfoVersion.debugVersion,
-                          aircraftInfoVersion.modifyVersion, aircraftInfoVersion.minorVersion,
-                          aircraftInfoVersion.majorVersion);
+            USER_LOG_INFO("Aircraft version is V%d.%d.%d.%d", aircraftInfoVersion.majorVersion,
+                          aircraftInfoVersion.minorVersion, aircraftInfoVersion.modifyVersion,
+                          aircraftInfoVersion.debugVersion);
         }
     }
 
@@ -219,7 +219,7 @@ int main(int argc, char **argv)
             .cleanUpgradeRebootState = DjiUpgradePlatformLinux_CleanUpgradeRebootState,
         };
         T_DjiTestUpgradeConfig testUpgradeConfig = {
-            .firmwareVersion = {1, 0, 0, 0},
+            .firmwareVersion = firmwareVersion,
             .transferType = DJI_FIRMWARE_TRANSFER_TYPE_DCFTP,
             .needReplaceProgramBeforeReboot = true
         };
@@ -326,7 +326,7 @@ int main(int argc, char **argv)
             .cleanUpgradeRebootState = DjiUpgradePlatformLinux_CleanUpgradeRebootState,
         };
         T_DjiTestUpgradeConfig testUpgradeConfig = {
-            .firmwareVersion = {1, 0, 0, 0},
+            .firmwareVersion = firmwareVersion,
             .transferType = DJI_FIRMWARE_TRANSFER_TYPE_DCFTP,
             .needReplaceProgramBeforeReboot = true
         };
@@ -699,6 +699,8 @@ static T_DjiReturnCode DjiUser_LocalWriteFsInit(const char *path)
         }
     }
 
+    sprintf(systemCmd, "ln -sfrv %s " DJI_LOG_FOLDER_NAME "/latest.log", filePath);
+    system(systemCmd);
     return djiReturnCode;
 }
 
