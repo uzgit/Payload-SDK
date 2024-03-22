@@ -1,3 +1,46 @@
+#*****************************************************************************
+# DISCLAIMER:
+# This software is provided "as is", without warranty of any kind, express or
+# implied, including but not limited to the warranties of merchantability,
+# fitness for a particular purpose and noninfringement. In no event shall the
+# authors or copyright holders be liable for any claim, damages or other
+# liability, whether in an action of contract, tort or otherwise, arising
+# from, out of or in connection with the software or the use or other dealings
+# in the software.
+#*****************************************************************************
+# PURPOSE:
+# Installation script to install the DJI PSDK on a Raspberry Pi 5 (8 GB RAM) so
+# that it can communicate with a DJI Matrice 350 RTK over its E-port. I have
+# compiled it in a single script to have everything "concisely" in one place.
+# The Raspberry Pi is connected to an E-port expansion board via a USB-to-UART
+# converter and USB-C to USB-C cable. The USB-to-UART converter provides basic
+# serial communication. The USB-C cable provides power to the Pi and a dual USB
+# bulk device that the drone uses as a high-bandwidth data transmission
+# interface. Additional power is provided over the GPIO pins because the Pi 5 is
+# power-hungry. The host/device switch on the E-port expansion board is set to
+# host.
+#*****************************************************************************
+# NOTES:
+# The script has been tested on 2024-03-15, on the 32-bit Raspbian Bookworm
+# image from 2024-03-15 and on PSDK v3.8. It compiles ffmpeg from source because
+# the PSDK currently requires ffmpeg <=v4.x.x and only >=v5.x.x are available
+# through standard aptitude. It includes an `rpi-update` to solve some kernel
+# issues relating to the Pi's ability to act as a USB gadget. It installs
+# services and programs to start the USB gadget and bulk devices on boot and to
+# run the fans at full blast. It edits some configuration files for the PSDK at
+# the end to allow it to link the correct libraries and install on the Pi. You
+# will have to add your own PSDK credentials.
+# I am using the script successfully for now (able to run the stereo and liveview
+# samples after compilation), but of course I make no guarantee that it will
+# continue working as the software updates. It will become less useful over time.
+# Your mileage may vary.
+# Lots of information and inspiration taken from here:
+# * https://sdk-forum.dji.net/hc/zh-cn/articles/10232604141465-%E6%A0%91%E8%8E%93%E6%B4%BE4B%E9%85%8D%E7%BD%AEUSB-device-RNDIS-%E5%92%8C-BULK
+# * https://pimylifeup.com/compiling-ffmpeg-raspberry-pi/
+# * https://www.hardill.me.uk/wordpress/2023/12/23/pi5-usb-c-gadget/
+# * https://github.com/raspberrypi/bookworm-feedback/issues/77
+#*****************************************************************************
+
 #!/bin/bash
 ###############################################################################################
 echo "Starting configuration script!"
