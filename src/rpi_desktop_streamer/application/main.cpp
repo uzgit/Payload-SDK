@@ -112,24 +112,24 @@ start:
         case '6':
             DjiTest_FlightControlRunSample(E_DJI_TEST_FLIGHT_CTRL_SAMPLE_SELECT_SET_GET_PARAM);
             break;
-        case '7':
-            DjiTest_HmsRunSample();
-            break;
+//        case '7':
+//            DjiTest_HmsRunSample();
+//            break;
         case '8':
             DjiTest_WaypointV2RunSample();
             break;
         case '9':
             DjiTest_WaypointV3RunSample();
             break;
-        case 'a':
-            DjiUser_RunGimbalManagerSample();
-            break;
+//        case 'a':
+//            DjiUser_RunGimbalManagerSample();
+//            break;
         case 'c':
             DjiUser_RunCameraStreamViewSample();
             break;
-        case 'd':
-            DjiUser_RunStereoVisionViewSample();
-            break;
+//        case 'd':
+//            DjiUser_RunStereoVisionViewSample();
+//            break;
         case 'e':
             returnCode = DjiTest_CameraEmuBaseStartService();
             if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
@@ -200,9 +200,9 @@ start:
 
             USER_LOG_INFO("Start data transmission sample successfully");
             break;
-        case 'k':
-            DjiUser_RunCameraManagerSample();
-            break;
+//        case 'k':
+//            DjiUser_RunCameraManagerSample();
+//            break;
         default:
             break;
     }

@@ -1,43 +1,71 @@
 cmake_minimum_required(VERSION 3.5)
-project(dji_sdk_demo_on_jetson_cxx CXX)
+project(rpi_desktop_streamer CXX)
 
 set(CMAKE_C_FLAGS "-pthread -std=gnu99")
 set(CMAKE_CXX_FLAGS "-std=c++11 -pthread")
 set(CMAKE_EXE_LINKER_FLAGS "-pthread")
-set(CMAKE_C_COMPILER "aarch64-linux-gnu-gcc")
-set(CMAKE_CXX_COMPILER "aarch64-linux-gnu-g++")
+set(CMAKE_C_COMPILER "gcc")
+set(CMAKE_CXX_COMPILER "g++")
 add_definitions(-D_GNU_SOURCE)
 
+if (MEMORY_LEAK_CHECK_ON MATCHES TRUE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=leak")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=leak")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -lasan")
+endif ()
+
 if (BUILD_TEST_CASES_ON MATCHES TRUE)
+    set(COMMON_CXX_FLAGS "-std=c++11 -pthread")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage -Wno-deprecated-declarations")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-arcs -ftest-coverage")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fprofile-arcs -ftest-coverage -lgcov")
 endif ()
 
-include_directories(../../../module_sample)
-include_directories(../../../../sample_c/module_sample)
-include_directories(../common)
-include_directories(../nvidia_jetson/application)
+include_directories(../../samples/sample_c++/module_sample/)
+include_directories(../../samples/sample_c/module_sample/)
+include_directories(../../samples/sample_c++/platform/linux/common/)
+include_directories(../../samples/sample_c++/platform/linux/manifold2/application)
 
 file(GLOB_RECURSE MODULE_SAMPLE_SRC
-        ../../../module_sample/liveview/*.c*
-        ../../../module_sample/camera_manager/*.c*
-        ../../../module_sample/perception/*.c*
-        ../../../module_sample/gimbal/*.c*
-        ../../../../sample_c/module_sample/*.c
+	../../samples/sample_c++/module_sample/liveview/*.c*
+        ../../samples/sample_c++/module_sample/module_sample/camera_manager/*.c*
+        ../../samples/sample_c++/module_sample/module_sample/perception/*.c*
+        ../../samples/sample_c++/module_sample/module_sample/gimbal/*.c*
+        ../../samples/sample_c++/module_sample/module_sample/flight_controller/*.c*
+        ../../samples/sample_c++/module_sample/hms_manager/*.c*
+	../../samples/sample_c/module_sample/*.c
+        ../../samples/sample_c/module_sample/custom_fc_subscription/*.c
+	../../samples/sample_c/module_sample/widget/*.c
+        ../../samples/sample_c/module_sample/utils/*.c
+        ../../samples/sample_c/module_sample/hms/*.c
+        ../../samples/sample_c/module_sample/gimbal/*.c
+        ../../samples/sample_c/module_sample/gimbal_manager/*.c
+        ../../samples/sample_c/module_sample/perception/*.c
         )
-file(GLOB_RECURSE MODULE_COMMON_SRC ../common/*.c*)
+file(GLOB_RECURSE MODULE_COMMON_SRC ../../samples/sample_c++/platform/linux/common/*.c*)
 file(GLOB_RECURSE MODULE_HAL_SRC hal/*.c*)
 file(GLOB_RECURSE MODULE_APP_SRC application/*.c*)
 
-set(TOOLCHAIN_NAME aarch64-linux-gnu-gcc)
-add_definitions(-DPLATFORM_ARCH_aarch64=1)
-add_definitions(-DSYSTEM_ARCH_LINUX=1)
+execute_process(COMMAND uname -m
+        OUTPUT_VARIABLE DEVICE_SYSTEM_ID)
+if (DEVICE_SYSTEM_ID MATCHES armv7l)
+    message("Raspberry Pi detected - setting LIBRARY_PATH")
+    set(TOOLCHAIN_NAME arm-linux-gnueabihf-gcc)
+elseif (DEVICE_SYSTEM_ID MATCHES x86_64)
+    set(TOOLCHAIN_NAME x86_64-linux-gnu-gcc)
+    add_definitions(-DPLATFORM_ARCH_x86_64=1)
+elseif (DEVICE_SYSTEM_ID MATCHES aarch64)
+    set(TOOLCHAIN_NAME aarch64-linux-gnu-gcc)
+    add_definitions(-DPLATFORM_ARCH_aarch64=1)
+else ()
+    message(FATAL_ERROR "FATAL: Please confirm your platform.")
+endif ()
 
-set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../common/3rdparty)
+set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../samples/sample_c++/platform/linux/common/3rdparty)
 
-link_directories(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/lib/${TOOLCHAIN_NAME})
-link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/lib/${TOOLCHAIN_NAME}/libpayloadsdk.a -lstdc++)
+link_directories(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME})
+#link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME}/libpayloadsdk.a -lstdc++)
+link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -lstdc++ -lavutil -lX11 -lva -lavutil -laom -ldav1d -lfdk-aac -lmp3lame -lkvazaar -lvpx -lavcodec -lswresample -lwebpmux -lwebp -lz -llzma -lsnappy -lx264 -lx265 -lopus -lopencore-amrnb -lopencore-amrwb)
 
 add_executable(${PROJECT_NAME}
         ${MODULE_APP_SRC}
@@ -54,7 +82,8 @@ if (OpenCV_FOUND)
     message(STATUS " - Includes: ${OpenCV_INCLUDE_DIRS}")
     message(STATUS " - Libraries: ${OpenCV_LIBRARIES}")
     add_definitions(-DOPEN_CV_INSTALLED)
-    if ("${OpenCV_VERSION}" STRLESS "4.0.0")
+    execute_process(COMMAND opencv_version OUTPUT_VARIABLE OPENCV_VERSION)
+    if (${OPENCV_VERSION} STRLESS "4.0.0")
         add_definitions(-DOPEN_CV_VERSION_3)
 
     else ()
@@ -91,9 +120,7 @@ if (FFMPEG_FOUND)
 else ()
     message(STATUS "Cannot Find FFMPEG")
 endif (FFMPEG_FOUND)
-
-include_directories(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/include)
-
+include_directories(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/include)
 
 find_package(OPUS REQUIRED)
 if (OPUS_FOUND)
