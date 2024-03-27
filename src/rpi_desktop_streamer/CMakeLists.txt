@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 project(rpi_desktop_streamer CXX)
 
 set(CMAKE_C_FLAGS "-pthread -std=gnu99")
-set(CMAKE_CXX_FLAGS "-std=c++11 -pthread")
+set(CMAKE_CXX_FLAGS "-std=c++11 -pthread -fpermissive")
 set(CMAKE_EXE_LINKER_FLAGS "-pthread")
 set(CMAKE_C_COMPILER "gcc")
 set(CMAKE_CXX_COMPILER "g++")
@@ -65,7 +65,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../samples/sample_c++/platf
 
 link_directories(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME})
 #link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME}/libpayloadsdk.a -lstdc++)
-link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -lstdc++ -lavutil -lX11 -lva -lavutil -laom -ldav1d -lfdk-aac -lmp3lame -lkvazaar -lvpx -lavcodec -lswresample -lwebpmux -lwebp -lz -llzma -lsnappy -lx264 -lx265 -lopus -lopencore-amrnb -lopencore-amrwb)
+#link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -lstdc++ -lavutil -lX11 -lva -lavfilter -lavformat -laom -ldav1d -lfdk-aac -lmp3lame -lkvazaar -lvpx -lavcodec -lswresample -lswscale -lavdevice -lwebpmux -lwebp -lz -llzma -lsnappy -lx264 -lx265 -lopus -lopencore-amrnb -lopencore-amrwb)
+link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -laom -lavcodec -lavdevice -lavfilter -lavformat -lavutil -ldav1d -lfdk-aac -lkvazaar -llzma -lopencore-amrnb -lopencore-amrwb -lopus -lmp3lame -lsnappy -lstdc++ -lswresample -lswscale -lva -lvpx -lwebp -lwebpmux -lx264 -lx265 -lz -lSDL2)
+
 
 add_executable(${PROJECT_NAME}
         ${MODULE_APP_SRC}
