@@ -33,7 +33,9 @@ file(GLOB_RECURSE MODULE_SAMPLE_SRC
         ../../samples/sample_c++/module_sample/module_sample/gimbal/*.c*
         ../../samples/sample_c++/module_sample/module_sample/flight_controller/*.c*
         ../../samples/sample_c++/module_sample/hms_manager/*.c*
-	../../samples/sample_c/module_sample/*.c
+	#	../../samples/sample_c/module_sample/*.c
+        ../../samples/sample_c/module_sample/camera_emu_clickable/*.c
+        ../../samples/sample_c/module_sample/gimbal_emu/*.c
         ../../samples/sample_c/module_sample/custom_fc_subscription/*.c
 	../../samples/sample_c/module_sample/widget/*.c
         ../../samples/sample_c/module_sample/utils/*.c
@@ -66,7 +68,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../../samples/sample_c++/platf
 link_directories(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME})
 #link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/${TOOLCHAIN_NAME}/libpayloadsdk.a -lstdc++)
 #link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -lstdc++ -lavutil -lX11 -lva -lavfilter -lavformat -laom -ldav1d -lfdk-aac -lmp3lame -lkvazaar -lvpx -lavcodec -lswresample -lswscale -lavdevice -lwebpmux -lwebp -lz -llzma -lsnappy -lx264 -lx265 -lopus -lopencore-amrnb -lopencore-amrwb)
-link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -laom -lavcodec -lavdevice -lavfilter -lavformat -lavutil -ldav1d -lfdk-aac -lkvazaar -llzma -lopencore-amrnb -lopencore-amrwb -lopus -lmp3lame -lsnappy -lstdc++ -lswresample -lswscale -lva -lvpx -lwebp -lwebpmux -lx264 -lx265 -lz -lSDL2)
+link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -laom -lavcodec -lavdevice -lavfilter -lavformat -lavutil -ldav1d -lfdk-aac -lkvazaar -llzma -lopencore-amrnb -lopencore-amrwb -lopus -lmp3lame -lsnappy -lstdc++ -lswresample -lswscale -lva -lvpx -lwebp -lwebpmux -lx264 -lx265 -lz -lSDL2 -lX11)
 
 
 add_executable(${PROJECT_NAME}

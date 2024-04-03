@@ -72,6 +72,7 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 #include <libswscale/swscale.h>
+#include <X11/Xlib.h>
 }
 
 #include <SDL2/SDL.h>
@@ -79,11 +80,9 @@ extern "C" {
 #define WIDTH 640
 #define HEIGHT 480
 #define FPS 30
-//#define WIDTH 1920
-//#define HEIGHT 1080
-//#define FPS 30
 
 #define DISPLAY 0
+#define CONNECT_PSDK 1
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -91,25 +90,28 @@ extern "C" {
 /* Private variables -------------------------------------------------------------*/
 
 /* camera_emu stuff ----------------------------------------------------- */
-typedef enum {
-    TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_STOP = 0,
-    TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_PAUSE = 1,
-    TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_START = 2,
+typedef enum
+{
+	TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_STOP = 0,
+	TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_PAUSE = 1,
+	TEST_PAYLOAD_CAMERA_MEDIA_PLAY_COMMAND_START = 2,
 } E_TestPayloadCameraPlaybackCommand;
 
-typedef struct {
-    uint8_t isInPlayProcess;
-    uint16_t videoIndex;
-    char filePath[DJI_FILE_PATH_SIZE_MAX];
-    uint32_t videoLengthMs;
-    uint64_t startPlayTimestampsUs;
-    uint64_t playPosMs;
+typedef struct
+{
+	uint8_t isInPlayProcess;
+	uint16_t videoIndex;
+	char filePath[DJI_FILE_PATH_SIZE_MAX];
+	uint32_t videoLengthMs;
+	uint64_t startPlayTimestampsUs;
+	uint64_t playPosMs;
 } T_DjiPlaybackInfo;
 
-typedef struct {
-    E_TestPayloadCameraPlaybackCommand command;
-    uint32_t timeMs;
-    char path[DJI_FILE_PATH_SIZE_MAX];
+typedef struct
+{
+	E_TestPayloadCameraPlaybackCommand command;
+	uint32_t timeMs;
+	char path[DJI_FILE_PATH_SIZE_MAX];
 } T_TestPayloadCameraPlaybackCommand;
 static T_DjiSemaHandle s_mediaPlayWorkSem = NULL;
 static T_DjiMutexHandle s_mediaPlayCommandBufferMutex = {0};
@@ -145,8 +147,9 @@ int main(int argc, char **argv)
 	signal(SIGTERM, signal_handler);  // Termination request
 
 	// start the DJI PSDK connector
+#if CONNECT_PSDK
 	application = new Application(argc, argv);
-
+#endif
 	if( application != NULL )
 	{
 		T_DjiOsalHandler *osalHandler = DjiPlatform_GetOsalHandler();
@@ -167,7 +170,7 @@ int main(int argc, char **argv)
 			USER_LOG_ERROR("get aircraft information error.");
 			return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
 		}
-		
+
 		static T_DjiCameraMediaDownloadPlaybackHandler s_psdkCameraMedia = {0};
 
 		if (DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS != osalHandler->SemaphoreCreate(0, &s_mediaPlayWorkSem))
@@ -223,6 +226,9 @@ int main(int argc, char **argv)
 	}
 
 	psdk_connector_running = false;
+
+	pthread_join( video_processing_thread, NULL );
+
 	usleep(500000);
 
 	if( application )
@@ -234,10 +240,10 @@ int main(int argc, char **argv)
 			USER_LOG_ERROR("mutex unlock error");
 			return DJI_ERROR_SYSTEM_MODULE_CODE_UNKNOWN;
 		}
+		cout << "Shutting down the PSDK connector..." << endl;
+		application->~Application();
 	}
 
-	cout << "Shutting down the PSDK connector..." << endl;
-	application->~Application();
 	cout << "Successfully shut down the PSDK connector!" << endl;
 	cout << "Ending the program now." << endl;
 
@@ -292,6 +298,8 @@ void* video_processing_function()
 	codecContext->pix_fmt 		= AV_PIX_FMT_YUV420P;
 
 	int result;
+	result = av_opt_set(codecContext, "threads", "4", 0);
+	cout << "result for setting num threads: " << result << endl;
 	result = av_opt_set(codecContext->priv_data, "preset", "ultrafast", 0);
 	cout << "result for setting ultrafast: " << result << endl;
 	result = av_opt_set(codecContext->priv_data, "tune", "zerolatency", 0);
@@ -303,7 +311,7 @@ void* video_processing_function()
 		signal_handler(SIGTERM);
 	}
 	cerr << "Opened codec context" << endl;
-
+	
 	// Allocate AVFrame
 	AVFrame *avFrame	= av_frame_alloc();
 	avFrame->format		= codecContext->pix_fmt;
@@ -318,34 +326,55 @@ void* video_processing_function()
 		return -1;
 	}
 
-	while( running )
-	{
-		try
-		{
-			// Read raw YUV420p frame from stdin
-			std::vector<uint8_t> raw_frame(WIDTH * HEIGHT * 3 / 2);
-			std::cin.read(reinterpret_cast<char*>(raw_frame.data()), raw_frame.size());
+	// Command to capture screen using ffmpeg
+	std::ostringstream ffmpeg_command_stream;
+	ffmpeg_command_stream << "ffmpeg -f x11grab -r " << FPS << " -s " << WIDTH << "x" << HEIGHT << " -i :0.0 -f rawvideo -pix_fmt yuv420p -";
+	std::string ffmpeg_cmd = ffmpeg_command_stream.str();
 
-			// Check if end of stream is reached
-			if (std::cin.eof())
-				break;
+	// Open subprocess to capture screen
+	FILE* ffmpeg_pipe = popen(ffmpeg_cmd.c_str(), "r");
+	if( ! ffmpeg_pipe )
+	{
+		std::cerr << "Error: Unable to open ffmpeg subprocess." << std::endl;
+		return 1;
+	}
+
+// Allocate memory for each plane
+	uint8_t bufferY[WIDTH * HEIGHT];  // Y plane
+	uint8_t bufferU[WIDTH * HEIGHT / 4]; // U plane
+	uint8_t bufferV[WIDTH * HEIGHT / 4]; // V plane
+
+	// Main loop to read and display frames
+	while (true)
+	{
+		// Allocate memory for the raw frame
+		std::vector<uint8_t> raw_frame(WIDTH * HEIGHT * 3 / 2);
+
+		// Read raw YUV420p frame from ffmpeg pipe
+		size_t bytes_read = fread(reinterpret_cast<char*>(raw_frame.data()), 1, raw_frame.size(), ffmpeg_pipe);
+
+		// Ensure that the correct number of bytes are read
+		if (bytes_read != raw_frame.size())
+		{
+			std::cerr << "Error: Failed to read complete frame from ffmpeg pipe." << std::endl;
+			break;
+		}
 
 #if DISPLAY
-			// Convert YUV420p to BGR
-			cv::Mat yuv(HEIGHT * 3 / 2, WIDTH, CV_8UC1, raw_frame.data());
-			cv::Mat bgr;
-			cv::cvtColor(yuv, bgr, cv::COLOR_YUV2BGR_I420);
+		// Convert YUV420p to BGR
+		cv::Mat yuv(HEIGHT * 3 / 2, WIDTH, CV_8UC1, raw_frame.data());
+		cv::Mat bgr;
+		cv::cvtColor(yuv, bgr, cv::COLOR_YUV2BGR_I420);
 
-			// Display the frame
-			cv::imshow("Desktop", bgr);
+		// Display the frame
+		cv::imshow("Desktop", bgr);
 
-			// Check for 'q' key press to exit
-			if (cv::waitKey(1) == 'q')
-			{
-				break;
-			}
+		// Check for 'q' key press to exit
+		if (cv::waitKey(1) == 'q')
+		{
+			break;
+		}
 #endif
-
 			// Copy data from raw_frame to AVFrame
 			for (int i = 0; i < codecContext->height; ++i)
 			{
@@ -392,12 +421,12 @@ void* video_processing_function()
 			{
 				// Process the packet (copy the data out)
 				// For demonstration, let's just print the first 10 bytes of the packet data
-				std::cout << "Encoded packet data (size: " << packet->size << " ): ";
-				for (int i = 0; i < 10 && i < packet->size; ++i)
-				{
-					std::cout << std::hex << static_cast<int>(packet->data[i]) << " ";
-				}
-				std::cout << std::endl;
+//				std::cout << "Encoded packet data (size: " << packet->size << " ): ";
+//				for (int i = 0; i < 10 && i < packet->size; ++i)
+//				{
+//					std::cout << std::hex << static_cast<int>(packet->data[i]) << " ";
+//				}
+//				std::cout << std::endl;
 
 				// Process the packet (copy the data out)
 				// Allocate memory for the encoded data
@@ -413,17 +442,17 @@ void* video_processing_function()
 
 				// Use the const uint8_t* pointer to access the encoded data
 				// For demonstration, let's print the first 10 bytes of the encoded data
-				std::cout << "Encoded packet data: ";
-				for (int i = 0; i < 10 && i < packet->size; ++i)
-				{
-					std::cout << std::hex << static_cast<int>(encoded_data[i]) << " ";
-				}
-				std::cout << std::endl;
+//				std::cout << "Encoded packet data: ";
+//				for (int i = 0; i < 10 && i < packet->size; ++i)
+//				{
+//					std::cout << std::hex << static_cast<int>(encoded_data[i]) << " ";
+//				}
+//				std::cout << std::endl;
 
 				if( psdk_connector_running )
 				{
 					T_DjiReturnCode returnCode;
-					cout << "attempting to send video stream!" << endl;
+//					cout << "attempting to send video stream!" << endl;
 
 //					DjiTest_CameraEmuSetFrameData(encoded_data, packet->size);
 //
@@ -431,7 +460,7 @@ void* video_processing_function()
 					while( packet->size - sent_data_size )
 					{
 
-						cout << "incremental: attempting to send video stream! sent_data_size=" << sent_data_size << endl;
+//						cout << "incremental: attempting to send video stream! sent_data_size=" << sent_data_size << endl;
 						int sending_data_size = packet->size - sent_data_size;
 						if( sending_data_size > 60000 )
 						{
@@ -442,7 +471,7 @@ void* video_processing_function()
 						returnCode = DjiPayloadCamera_SendVideoStream((const uint8_t *) encoded_data + sent_data_size, sending_data_size);
 						if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 						{
-							cout << "********************** send video stream error " << returnCode;
+//							cout << "********************** send video stream error " << returnCode;
 							USER_LOG_ERROR("send video stream error: 0x%08llX.", returnCode);
 						}
 						sent_data_size += sending_data_size;
@@ -452,24 +481,24 @@ void* video_processing_function()
 					returnCode = DjiPayloadCamera_GetVideoStreamState(&videoStreamState);
 					if (returnCode == DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS)
 					{
-						cout << "video stream state: "
-						     << endl
-						     << "realtimeBandwidthLimit: "
-						     << endl
-						     << videoStreamState.realtimeBandwidthLimit
-						     << endl
-						     << "realtimeBandwidthBeforeFlowController: "
-						     << endl
-						     << videoStreamState.realtimeBandwidthBeforeFlowController
-						     << endl
-						     << "realtimeBandwidthAfterFlowController: "
-						     << endl
-						     << videoStreamState.realtimeBandwidthAfterFlowController
-						     << endl
-						     << "busyState: "
-						     << endl
-						     << videoStreamState.busyState
-						     << endl;
+//						cout << "video stream state: "
+//						     << endl
+//						     << "realtimeBandwidthLimit: "
+//						     << endl
+//						     << videoStreamState.realtimeBandwidthLimit
+//						     << endl
+//						     << "realtimeBandwidthBeforeFlowController: "
+//						     << endl
+//						     << videoStreamState.realtimeBandwidthBeforeFlowController
+//						     << endl
+//						     << "realtimeBandwidthAfterFlowController: "
+//						     << endl
+//						     << videoStreamState.realtimeBandwidthAfterFlowController
+//						     << endl
+//						     << "busyState: "
+//						     << endl
+//						     << videoStreamState.busyState
+//						     << endl;
 						USER_LOG_DEBUG(
 						    "video stream state: realtimeBandwidthLimit: %d, realtimeBandwidthBeforeFlowController: %d, realtimeBandwidthAfterFlowController:%d busyState: %d.",
 						    videoStreamState.realtimeBandwidthLimit, videoStreamState.realtimeBandwidthBeforeFlowController,
@@ -487,18 +516,120 @@ void* video_processing_function()
 			}
 			// Free the packet
 			av_packet_unref(packet);
-		}
-		catch (const std::exception& e)
-		{
-			std::cerr << "Exception: " << e.what() << std::endl;
-			//break;
-		}
-// **************************************************************
 	}
 
-	// Release VideoCapture and destroy OpenCV windows
-	destroyAllWindows();
+	// Close ffmpeg subprocess
+	pclose(ffmpeg_pipe);
+
+	return 0;
 }
+
+//void* video_processing_function()
+//{
+//	cout << "Starting the video processing function!" << endl;
+//
+//	// Command to capture screen using ffmpeg
+//	std::ostringstream ffmpeg_command_stream;
+//	ffmpeg_command_stream << "ffmpeg -f x11grab -r " << FPS << " -s " << WIDTH << "x" << HEIGHT << " -i :0.0 -f rawvideo -pix_fmt yuv420p -";
+//	std::string ffmpeg_cmd = ffmpeg_command_stream.str();
+//
+//#if DISPLAY
+//	// OpenCV window settings
+//	cv::namedWindow("Screen Capture", cv::WINDOW_NORMAL);
+////	cv::resizeWindow("Screen Capture", WIDTH, HEIGHT);
+//#endif
+//
+//	// Open subprocess to capture screen
+//	FILE* ffmpeg_pipe = popen(ffmpeg_cmd.c_str(), "r");
+//	if( ! ffmpeg_pipe )
+//	{
+//		std::cerr << "Error: Unable to open ffmpeg subprocess." << std::endl;
+//		return 1;
+//	}
+//
+//// Allocate memory for each plane
+//	uint8_t bufferY[WIDTH * HEIGHT];  // Y plane
+//	uint8_t bufferU[WIDTH * HEIGHT / 4]; // U plane
+//	uint8_t bufferV[WIDTH * HEIGHT / 4]; // V plane
+//
+//	// Main loop to read and display frames
+//	while (true)
+//	{
+//		// Read raw video frame from ffmpeg pipe
+//		size_t bytes_read_Y = fread(bufferY, 1, sizeof(bufferY), ffmpeg_pipe);
+//		size_t bytes_read_U = fread(bufferU, 1, sizeof(bufferU), ffmpeg_pipe);
+//		size_t bytes_read_V = fread(bufferV, 1, sizeof(bufferV), ffmpeg_pipe);
+//
+//		// Ensure that the correct number of bytes are read for each plane
+//		if (bytes_read_Y != sizeof(bufferY) || bytes_read_U != sizeof(bufferU) || bytes_read_V != sizeof(bufferV))
+//		{
+//			std::cerr << "Error: Failed to read complete frame from ffmpeg pipe." << std::endl;
+//			break;
+//		}
+//
+//#if DISPLAY
+//		// Convert YUV420p to RGB and display frame using OpenCV
+//		cv::Mat frameYUV(HEIGHT + HEIGHT / 2, WIDTH, CV_8UC1);
+//		memcpy(frameYUV.data, bufferY, sizeof(bufferY));
+//		memcpy(frameYUV.data + sizeof(bufferY), bufferU, sizeof(bufferU));
+//		memcpy(frameYUV.data + sizeof(bufferY) + sizeof(bufferU), bufferV, sizeof(bufferV));
+//		cv::Mat frameRGB;
+//		cv::cvtColor(frameYUV, frameRGB, cv::COLOR_YUV2BGR_I420); // Convert YUV420p to BGR
+//		cv::imshow("Screen Capture", frameRGB);
+//		cv::waitKey(1000 / FPS); // Adjust delay according to FPS
+//#endif
+//	}
+//
+//	// Close ffmpeg subprocess
+//	pclose(ffmpeg_pipe);
+//
+//	return 0;
+//}
+
+//void* video_processing_function()
+//{
+//    // Command to capture screen using ffmpeg
+//    std::string ffmpeg_cmd = "ffmpeg -f x11grab -r 30 -s 640x480 -i :0.0 -f rawvideo -pix_fmt bgr24 -";
+//
+//    // OpenCV window settings
+//    cv::namedWindow("Screen Capture", cv::WINDOW_NORMAL);
+//    cv::resizeWindow("Screen Capture", 640, 480);
+//
+//    // Open subprocess to capture screen
+//    FILE* ffmpeg_pipe = popen(ffmpeg_cmd.c_str(), "r");
+//    if (!ffmpeg_pipe) {
+//        std::cerr << "Error: Unable to open ffmpeg subprocess." << std::endl;
+//        return 1;
+//    }
+//
+//    // Main loop to read and display frames
+//    while (true) {
+//        // Read raw frame bytes from ffmpeg subprocess
+//        cv::Mat frame(480, 640, CV_8UC3);
+//        size_t bytes_read = fread(frame.data, 1, 640 * 480 * 3, ffmpeg_pipe);
+//
+//        // Check if frame data read was successful
+//        if (bytes_read != 640 * 480 * 3) {
+//            std::cerr << "Error: Unable to read frame data." << std::endl;
+//            break;
+//        }
+//
+//#if DISPLAY
+//        // Display frame
+//        cv::imshow("Screen Capture", frame);
+//
+//        // Check for user input to exit
+//        if (cv::waitKey(1) == 'q') {
+//            break;
+//        }
+//#endif
+//    }
+//
+//    // Close ffmpeg subprocess
+//    pclose(ffmpeg_pipe);
+//
+//    return 0;
+//}
 
 /* Private functions definition-----------------------------------------------*/
 static T_DjiReturnCode DjiTest_HighPowerApplyPinInit()
