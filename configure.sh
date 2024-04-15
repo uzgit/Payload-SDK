@@ -133,6 +133,7 @@ sudo apt-get -y install \
     tree \
     wget \
     vim \
+    xdotool \
     yasm \
     zlib1g-dev
 
