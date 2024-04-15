@@ -1323,72 +1323,79 @@ gcc -Wall -O2 -c -o ~/startup-bulk.o ~/startup-bulk.c \
   && rm -f ~/startup-bulk.o startup-bulk.c
 echo "Compiled"
 echo
-###############################################################################################
-echo "Compiling ffmpeg version <5 and corresponding dependencies"
-# make a workspace
-mkdir -p ~/git
-
-echo "Building AAC..."
-git clone --depth 1 --recursive https://github.com/mstorsjo/fdk-aac.git ~/git/fdk-aac \
-  && cd ~/git/fdk-aac \
-  && autoreconf -fiv \
-  && ./configure \
-  && make -j4 \
-  && sudo make install
-
-echo "Building AV1..."
-git clone --depth 1 --recursive https://code.videolan.org/videolan/dav1d.git ~/git/dav1d \
-  && mkdir ~/git/dav1d/build \
-  && cd ~/git/dav1d/build \
-  && meson .. \
-  && ninja \
-  && sudo ninja install
-
-echo "Building HEVC..."
-git clone --depth 1 --recursive https://github.com/ultravideo/kvazaar.git ~/git/kvazaar \
-  && cd ~/git/kvazaar \
-  && ./autogen.sh \
-  && ./configure \
-  && make -j4 \
-  && sudo make install
-
-echo "Building VP8 and VP9..."
-git clone --depth 1 --recursive https://chromium.googlesource.com/webm/libvpx ~/git/libvpx \
-  && cd ~/git/libvpx \
-  && ./configure --disable-examples --disable-tools --disable-unit_tests --disable-docs \
-  && make -j4 \
-  && sudo make install
-
-echo "Updating available libraries..."
-sudo ldconfig
-
-echo "Building ffmpeg 4.4.4..."
-cd ~/git \
-  && wget https://ffmpeg.org/releases/ffmpeg-4.4.4.tar.gz \
-  && tar -xvf ffmpeg-4.4.4.tar.gz \
-  && cd ffmpeg-4.4.4 \
-  && ./configure --extra-cflags=-I/usr/local/include --extra-ldflags=-L/usr/local/lib --extra-libs='-lpthread -lm -latomic' --arch=aarch32 --enable-gmp --enable-gpl --enable-libaom --enable-libass --enable-libdav1d --enable-libfdk-aac --enable-libfreetype --enable-libkvazaar --enable-libmp3lame --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopus --enable-librtmp --enable-libsnappy --enable-libsoxr --enable-libssh --enable-libvorbis --enable-libvpx --enable-libzimg --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxml2 --enable-nonfree --enable-version3 --target-os=linux --enable-pthreads --enable-shared --enable-pic \
-  && make -j4 \
-  && sudo make install
 
 echo "Updating available libraries..."
 sudo ldconfig
 
 echo "Building DJI Payload-SDK..."
-rpi5_32bit_libraries='link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/lib/arm-linux-gnueabihf-gcc/libpayloadsdk.a -lstdc++ -lavutil -lX11 -lva -lavutil -laom -ldav1d -lfdk-aac -lmp3lame -lkvazaar -lvpx -lavcodec -lswresample -lwebpmux -lwebp -lz -llzma -lsnappy -lx264 -lx265 -lopus -lopencore-amrnb -lopencore-amrwb)'
-sdk_configuration='#define CONFIG_HARDWARE_CONNECTION DJI_USE_UART_AND_USB_BULK_DEVICE'
-git clone --depth 1 --recursive https://github.com/dji-sdk/Payload-SDK ~/git/Payload-SDK \
+git clone --depth 1 --recursive https://github.com/uzgit/Payload-SDK ~/git/Payload-SDK \
   && cd ~/git/Payload-SDK/ \
-  && echo "Setting linked libraries for ffmpeg4.4 compiled from source..." \
-  && sed -i "0,/link_libraries/s#^link_libraries.*#$rpi5_32bit_libraries#" "$HOME/git/Payload-SDK/samples/sample_c++/platform/linux/manifold2/CMakeLists.txt" \
-  && echo "Setting SDK configuration to UART + USB Bulk" \
-  && sed -i 's/^#define CONFIG_HARDWARE_CONNECTION.*$/'"$sdk_configuration"'/' "$HOME/git/Payload-SDK/samples/sample_c++/platform/linux/manifold2/application/dji_sdk_config.h" \
   && rm -rf build \
   && mkdir build \
   && cd build \
   && cmake .. \
   && make -j4 \
   && cd ~/git/Payload-SDK/
+
+echo "Creating the "~/reach_uptime.sh" script..."
+cat > ~/reach_uptime.sh << 'EOF-reach_uptime.sh'
+#!/bin/bash
+
+# Check if the number of arguments provided is correct
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <uptime_threshold_in_seconds>"
+    exit 1
+fi
+
+# Store the uptime threshold provided as the first argument
+n=$1
+
+# Get the current uptime in seconds
+uptime_seconds=$(awk '{print $1}' /proc/uptime)
+
+# Check if the current uptime is less than n seconds
+while (( $(echo "$uptime_seconds < $n" | bc -l) )); do
+    # Calculate remaining time to sleep
+    remaining_sleep=$(echo "$n - $uptime_seconds" | bc -l)
+    
+    # Print remaining time to sleep
+    echo "Remaining time to reach minimum uptime: $remaining_sleep seconds"
+    
+    # Sleep for 5 seconds
+    sleep 5
+    
+    # Update current uptime in seconds
+    uptime_seconds=$(awk '{print $1}' /proc/uptime)
+done
+
+# Print the message
+echo "Reached minimum uptime of $n seconds!"
+EOF-reach_uptime.sh
+chmod +x ~/reach_uptime.sh
+
+echo "Setting up service file for the desktop streamer application..."
+cat > ~/video_streamer.service << 'EOF-video_streamer.service'
+[Unit]
+Description=Video Streamer Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStartPre=/home/joshua/reach_uptime.sh 180
+ExecStart=/bin/bash -c "DISPLAY=:0 XAUTHORITY=/home/joshua/.Xauthority /home/joshua/git/Payload-SDK/build/bin/rpi_desktop_streamer"
+TimeoutSec=300
+Restart=always
+RestartSec=3
+StandardOutput=/home/joshua/log.txt
+
+[Install]
+WantedBy=multi-user.target
+EOF-video_streamer.service
+sudo mv ~/video_streamer.service /etc/systemd/system
+sudo systemctl daemon-reload
+sudo systemctl enable video_streamer.service
 
 echo "Updating file database..."
 sudo updatedb
