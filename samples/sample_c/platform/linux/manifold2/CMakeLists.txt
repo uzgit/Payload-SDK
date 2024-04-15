@@ -44,13 +44,6 @@ include_directories(../common)
 include_directories(../manifold2/application)
 
 include_directories(../../../../../psdk_lib/include)
-
-file(READ /proc/device-tree/model RPI_MODEL)
-if("${RPI_MODEL}" MATCHES "Raspberry Pi")
-    message("Raspberry Pi detected - setting LIBRARY_PATH")
-    set(TOOLCHAIN_NAME arm-linux-gnueabihf-gcc)
-endif()
-
 link_directories(../../../../../psdk_lib/lib/${TOOLCHAIN_NAME})
 link_libraries(${CMAKE_CURRENT_LIST_DIR}/../../../../../psdk_lib/lib/${TOOLCHAIN_NAME}/lib${PACKAGE_NAME}.a)
 

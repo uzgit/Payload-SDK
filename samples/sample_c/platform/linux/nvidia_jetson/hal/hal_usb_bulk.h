@@ -55,16 +55,16 @@ extern "C" {
 #define LINUX_USB_BULK1_EP_OUT_FD               "/dev/usb-ffs/bulk1/ep1"
 #define LINUX_USB_BULK1_EP_IN_FD                "/dev/usb-ffs/bulk1/ep2"
 
-#define LINUX_USB_BULK1_INTERFACE_NUM           (2)
-#define LINUX_USB_BULK1_END_POINT_IN            (0x83)
-#define LINUX_USB_BULK1_END_POINT_OUT           (2)
+#define LINUX_USB_BULK1_INTERFACE_NUM           (7)
+#define LINUX_USB_BULK1_END_POINT_IN            (0x88)
+#define LINUX_USB_BULK1_END_POINT_OUT           (5)
 
 #define LINUX_USB_BULK2_EP_OUT_FD               "/dev/usb-ffs/bulk2/ep1"
 #define LINUX_USB_BULK2_EP_IN_FD                "/dev/usb-ffs/bulk2/ep2"
 
-#define LINUX_USB_BULK2_INTERFACE_NUM           (3)
-#define LINUX_USB_BULK2_END_POINT_IN            (0x84)
-#define LINUX_USB_BULK2_END_POINT_OUT           (3)
+#define LINUX_USB_BULK2_INTERFACE_NUM           (8)
+#define LINUX_USB_BULK2_END_POINT_IN            (0x89)
+#define LINUX_USB_BULK2_END_POINT_OUT           (6)
 
 #ifdef PLATFORM_ARCH_x86_64
 #define LINUX_USB_VID                         (0x0B95)

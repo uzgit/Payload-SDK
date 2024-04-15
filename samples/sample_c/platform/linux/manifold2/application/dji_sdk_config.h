@@ -40,19 +40,35 @@ extern "C" {
 
 /*!< Attention: Select your hardware connection mode here.
 * */
-#define CONFIG_HARDWARE_CONNECTION         DJI_USE_ONLY_UART
+#define CONFIG_HARDWARE_CONNECTION         DJI_USE_UART_AND_NETWORK_DEVICE
 
 /*!< Attention: Select the sample you want to run here.
 * */
+#define CONFIG_MODULE_SAMPLE_POWER_MANAGEMENT_ON
+
+#define CONFIG_MODULE_SAMPLE_CAMERA_EMU_ON
+
+#define CONFIG_MODULE_SAMPLE_CAMERA_MEDIA_ON
+
 #define CONFIG_MODULE_SAMPLE_GIMBAL_EMU_ON
+
+#define CONFIG_MODULE_SAMPLE_XPORT_ON
 
 #define CONFIG_MODULE_SAMPLE_WIDGET_ON
 
 #define CONFIG_MODULE_SAMPLE_WIDGET_SPEAKER_ON
 
-#define CONFIG_MODULE_SAMPLE_POWER_MANAGEMENT_ON
-
 #define CONFIG_MODULE_SAMPLE_DATA_TRANSMISSION_ON
+
+#define CONFIG_MODULE_SAMPLE_UPGRADE_ON
+
+#define CONFIG_MODULE_SAMPLE_FC_SUBSCRIPTION_ON
+
+#define CONFIG_MODULE_SAMPLE_HMS_CUSTOMIZATION_ON
+
+/*!< Attention: This function needs to be used together with mobile sdk mop sample.
+* */
+//#define CONFIG_MODULE_SAMPLE_MOP_CHANNEL_ON
 
 /* Exported types ------------------------------------------------------------*/
 

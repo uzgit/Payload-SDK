@@ -54,4 +54,5 @@ lib/*
 bin/*
 test/test_runner
 
-*/dji_sdk_app_info.h
+config/
+*dji_sdk_app_info.h

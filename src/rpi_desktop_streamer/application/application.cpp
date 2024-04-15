@@ -234,11 +234,11 @@ void Application::DjiUser_ApplicationStart()
         throw std::runtime_error("Get aircraft base info error.");
     }
 
-    if (aircraftInfoBaseInfo.mountPosition != DJI_MOUNT_POSITION_EXTENSION_PORT) {
-        throw std::runtime_error("Please run this sample on extension port.");
-    }
+//    if (aircraftInfoBaseInfo.mountPosition != DJI_MOUNT_POSITION_EXTENSION_PORT) {
+//        throw std::runtime_error("Please run this sample on extension port.");
+//    }
 
-    returnCode = DjiCore_SetAlias("PSDK_APPALIAS");
+    returnCode = DjiCore_SetAlias("Jetson Nano (C++)");
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         throw std::runtime_error("Set alias error.");
     }

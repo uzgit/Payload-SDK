@@ -1,7 +1,7 @@
 /**
  ********************************************************************
- * @file    dji_camera_stream_decoder.hpp
- * @brief   This is the header file for "dji_camera_stream_decoder.cpp", defining the structure and
+ * @file    hal_uart.h
+ * @brief   This is the header file for "hal_uart.c", defining the structure and
  * (exported) function prototypes.
  *
  * @copyright (c) 2021 DJI. All rights reserved.
@@ -24,68 +24,42 @@
  */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef DJI_CAMERA_STREAM_DECCODER_H
-#define DJI_CAMERA_STREAM_DECCODER_H
+#ifndef HAL_UART_H
+#define HAL_UART_H
 
 /* Includes ------------------------------------------------------------------*/
-extern "C" {
-#ifdef FFMPEG_INSTALLED
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
-#endif
-}
+#include "stdint.h"
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <string.h>
+#include "stdlib.h"
 
-#include "pthread.h"
-#include "dji_camera_image_handler.hpp"
+#include "dji_platform.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Exported constants --------------------------------------------------------*/
+//User can config dev based on there environmental conditions
+#define LINUX_UART_DEV1    "/dev/ttyUSB0"
+#define LINUX_UART_DEV2    "/dev/ttyUSB0"
 
 /* Exported types ------------------------------------------------------------*/
-class DJICameraStreamDecoder {
-public:
-    DJICameraStreamDecoder();
-    ~DJICameraStreamDecoder();
-    bool init();
-    void cleanup();
-
-    void callbackThreadFunc();
-    void decodeBuffer(const uint8_t *pBuf, int len);
-    static void *callbackThreadEntry(void *p);
-    bool registerCallback(CameraImageCallback f, void *param);
-    DJICameraImageHandler decodedImageHandler;
-
-private:
-    pthread_t callbackThread;
-    bool initSuccess;
-    bool cbThreadIsRunning;
-    int cbThreadStatus;
-    CameraImageCallback cb;
-    void *cbUserParam;
-
-    pthread_mutex_t decodemutex;
-
-#ifdef FFMPEG_INSTALLED
-    AVCodecContext *pCodecCtx;
-    AVCodec *pCodec;
-    AVCodecParserContext *pCodecParserCtx;
-    SwsContext *pSwsCtx;
-
-    AVFrame *pFrameYUV;
-    AVFrame *pFrameRGB;
-#endif
-    size_t bufSize;
-};
 
 /* Exported functions --------------------------------------------------------*/
+T_DjiReturnCode HalUart_Init(E_DjiHalUartNum uartNum, uint32_t baudRate, T_DjiUartHandle *uartHandle);
+T_DjiReturnCode HalUart_DeInit(T_DjiUartHandle uartHandle);
+T_DjiReturnCode HalUart_WriteData(T_DjiUartHandle uartHandle, const uint8_t *buf, uint32_t len, uint32_t *realLen);
+T_DjiReturnCode HalUart_ReadData(T_DjiUartHandle uartHandle, uint8_t *buf, uint32_t len, uint32_t *realLen);
+T_DjiReturnCode HalUart_GetStatus(E_DjiHalUartNum uartNum, T_DjiUartStatus *status);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // DJI_CAMERA_STREAM_DECCODER_H
+#endif // HAL_UART_H
 /************************ (C) COPYRIGHT DJI Innovations *******END OF FILE******/

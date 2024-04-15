@@ -1,7 +1,7 @@
 /**
  ********************************************************************
- * @file    dji_camera_stream_decoder.hpp
- * @brief   This is the header file for "dji_camera_stream_decoder.cpp", defining the structure and
+ * @file    hal_network.h
+ * @brief   This is the header file for "hal_network.c", defining the structure and
  * (exported) function prototypes.
  *
  * @copyright (c) 2021 DJI. All rights reserved.
@@ -24,20 +24,11 @@
  */
 
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef DJI_CAMERA_STREAM_DECCODER_H
-#define DJI_CAMERA_STREAM_DECCODER_H
+#ifndef HAL_NETWORK_H
+#define HAL_NETWORK_H
 
 /* Includes ------------------------------------------------------------------*/
-extern "C" {
-#ifdef FFMPEG_INSTALLED
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include <libswscale/swscale.h>
-#endif
-}
-
-#include "pthread.h"
-#include "dji_camera_image_handler.hpp"
+#include "dji_platform.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,47 +36,38 @@ extern "C" {
 
 /* Exported constants --------------------------------------------------------*/
 
-/* Exported types ------------------------------------------------------------*/
-class DJICameraStreamDecoder {
-public:
-    DJICameraStreamDecoder();
-    ~DJICameraStreamDecoder();
-    bool init();
-    void cleanup();
-
-    void callbackThreadFunc();
-    void decodeBuffer(const uint8_t *pBuf, int len);
-    static void *callbackThreadEntry(void *p);
-    bool registerCallback(CameraImageCallback f, void *param);
-    DJICameraImageHandler decodedImageHandler;
-
-private:
-    pthread_t callbackThread;
-    bool initSuccess;
-    bool cbThreadIsRunning;
-    int cbThreadStatus;
-    CameraImageCallback cb;
-    void *cbUserParam;
-
-    pthread_mutex_t decodemutex;
-
-#ifdef FFMPEG_INSTALLED
-    AVCodecContext *pCodecCtx;
-    AVCodec *pCodec;
-    AVCodecParserContext *pCodecParserCtx;
-    SwsContext *pSwsCtx;
-
-    AVFrame *pFrameYUV;
-    AVFrame *pFrameRGB;
+/** @attention  User can config network card name here, if your device is not MF2C/G, please comment below and add your
+ * NIC name micro define as #define 'LINUX_NETWORK_DEV   "your NIC name"'.
+ */
+#ifdef PLATFORM_ARCH_x86_64
+#define LINUX_NETWORK_DEV           "eth0"
+#else
+#define LINUX_NETWORK_DEV           "eth0"
 #endif
-    size_t bufSize;
-};
+/**
+ * @attention
+ */
+
+#ifdef PLATFORM_ARCH_x86_64
+#define USB_NET_ADAPTER_VID                   (0x0B95)
+#define USB_NET_ADAPTER_PID                   (0x1790)
+#else
+#define USB_NET_ADAPTER_VID                   (0x0955)
+#define USB_NET_ADAPTER_PID                   (0x7020)
+#endif
+
+#define LINUX_CMD_STR_MAX_SIZE      (128)
+
+/* Exported types ------------------------------------------------------------*/
 
 /* Exported functions --------------------------------------------------------*/
+T_DjiReturnCode HalNetWork_Init(const char *ipAddr, const char *netMask, T_DjiNetworkHandle *halObj);
+T_DjiReturnCode HalNetWork_DeInit(T_DjiNetworkHandle halObj);
+T_DjiReturnCode HalNetWork_GetDeviceInfo(T_DjiHalNetworkDeviceInfo *deviceInfo);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // DJI_CAMERA_STREAM_DECCODER_H
+#endif // HAL_NETWORK_H
 /************************ (C) COPYRIGHT DJI Innovations *******END OF FILE******/
