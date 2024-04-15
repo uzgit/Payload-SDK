@@ -52,8 +52,9 @@ echo "Script is located at: $script_location"
 echo "Setting the date without using NTP directly because the port is blocked here..."
 sudo date -s "$(curl -s --head time.cloudflare.com | grep '^Date:' | cut -d ' ' -f 3-6)Z"
 
-echo "Updating kernel..."
-sudo SKIP_WARNING=1 rpi-update
+# not necessary to update the kernel anymore
+#echo "Updating kernel..."
+#sudo SKIP_WARNING=1 rpi-update
 
 echo "Switching from Wayland to X11..." 
 sudo raspi-config nonint do_wayland W1
