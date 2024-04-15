@@ -1,1 +1,0 @@
-../../../../../../config/dji_sdk_app_info.h
