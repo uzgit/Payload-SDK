@@ -137,6 +137,9 @@ int main(int argc, char **argv)
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;
     }
 
+<<<<<<< HEAD
+    returnCode = DjiCore_SetAlias("Jetson (C)");
+=======
     returnCode = DjiAircraftInfo_GetAircraftVersion(&aircraftInfoVersion);
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("get aircraft version info error");
@@ -147,6 +150,7 @@ int main(int argc, char **argv)
     }
 
     returnCode = DjiCore_SetAlias("PSDK_APPALIAS");
+>>>>>>> beb6359d41d381dc941880a7026acc66cf365a87
     if (returnCode != DJI_ERROR_SYSTEM_MODULE_CODE_SUCCESS) {
         USER_LOG_ERROR("set alias error");
         return DJI_ERROR_SYSTEM_MODULE_CODE_SYSTEM_ERROR;

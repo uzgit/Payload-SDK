@@ -35,9 +35,17 @@
 #include "opencv2/highgui/highgui.hpp"
 #include "../../../sample_c/module_sample/utils/util_misc.h"
 
+#include <chrono>
+
 using namespace cv;
 #endif
 using namespace std;
+using std::cout;
+using std::endl;
+using std::chrono::duration_cast;
+using std::chrono::milliseconds;
+using std::chrono::seconds;
+using std::chrono::system_clock;
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -185,6 +193,11 @@ void DjiUser_RunCameraStreamViewSample()
 /* Private functions definition-----------------------------------------------*/
 static void DjiUser_ShowRgbImageCallback(CameraRGBImage img, void *userData)
 {
+
+    auto millisec_since_epoch = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+
+    cout << "Received image( " << millisec_since_epoch << " ): width=" << img.width << ", height=" << img.height << endl;
+
     string name = string(reinterpret_cast<char *>(userData));
 
 #ifdef OPEN_CV_INSTALLED
