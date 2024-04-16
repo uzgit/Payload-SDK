@@ -59,6 +59,9 @@ sudo date -s "$(curl -s --head time.cloudflare.com | grep '^Date:' | cut -d ' ' 
 echo "Switching from Wayland to X11..." 
 sudo raspi-config nonint do_wayland W1
 
+echo "Setting VNC resolution to 640x480..."
+sudo raspi-config nonint do_vnc_resolution 640x480
+
 ###############################################################################################
 echo "Installing basic required software and development packages"
 sudo apt-get update
