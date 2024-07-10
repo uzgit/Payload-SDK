@@ -22,9 +22,7 @@
 #*****************************************************************************
 # NOTES:
 # The script has been tested on 2024-03-15, on the 32-bit Raspbian Bookworm
-# image from 2024-03-15 and on PSDK v3.8. It compiles ffmpeg from source because
-# the PSDK currently requires ffmpeg <=v4.x.x and only >=v5.x.x are available
-# through standard aptitude. It includes an `rpi-update` to solve some kernel
+# image from 2024-03-15 and on PSDK v3.8. It includes an `rpi-update` to solve some kernel
 # issues relating to the Pi's ability to act as a USB gadget. It installs
 # services and programs to start the USB gadget and bulk devices on boot and to
 # run the fans at full blast. It edits some configuration files for the PSDK at
