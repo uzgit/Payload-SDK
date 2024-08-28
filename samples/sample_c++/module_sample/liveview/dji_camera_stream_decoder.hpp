@@ -33,6 +33,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
+#include <libavutil/imgutils.h>
 #endif
 }
 
@@ -76,9 +77,13 @@ private:
     SwsContext *pSwsCtx;
 
     AVFrame *pFrameYUV;
+    AVFrame *pFrameYUV_copy;
     AVFrame *pFrameRGB;
+    int image_output_width  = 640;
+    int image_output_height = 480;
 #endif
     size_t bufSize;
+    bool image_ready = false;
 };
 
 /* Exported functions --------------------------------------------------------*/

@@ -27,6 +27,7 @@
 #include "unistd.h"
 #include "pthread.h"
 #include "dji_logger.h"
+#include <chrono>
 
 /* Private constants ---------------------------------------------------------*/
 
@@ -49,6 +50,7 @@ DJICameraStreamDecoder::DJICameraStreamDecoder()
       pCodecParserCtx(nullptr),
       pSwsCtx(nullptr),
       pFrameYUV(nullptr),
+      pFrameYUV_copy(nullptr),
       pFrameRGB(nullptr),
 #endif
       bufSize(0)
@@ -85,7 +87,9 @@ bool DJICameraStreamDecoder::init()
 
     pCodecCtx->thread_count = 4;
     // pCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    pCodec = const_cast<AVCodec *>(avcodec_find_decoder(AV_CODEC_ID_H264));
+    //pCodec = const_cast<AVCodec *>(avcodec_find_decoder(AV_CODEC_ID_H264));
+    //pCodec = const_cast<AVCodec *>(avcodec_find_decoder_by_name("h264"));
+    pCodec = const_cast<AVCodec *>(avcodec_find_decoder_by_name("h264_v4l2m2m"));
     if (!pCodec || avcodec_open2(pCodecCtx, pCodec, nullptr) < 0) {
         return false;
     }
@@ -99,6 +103,11 @@ bool DJICameraStreamDecoder::init()
     if (!pFrameYUV) {
         return false;
     }
+    
+//    pFrameYUV_copy = av_frame_alloc();
+//    if (!pFrameYUV_copy) {
+//        return false;
+//    }
 
     pFrameRGB = av_frame_alloc();
     if (!pFrameRGB) {
@@ -130,6 +139,11 @@ void DJICameraStreamDecoder::cleanup()
     if (nullptr != pFrameYUV) {
         av_free(pFrameYUV);
         pFrameYUV = nullptr;
+    }
+
+    if (nullptr != pFrameYUV_copy) {
+        av_free(pFrameYUV_copy);
+        pFrameYUV_copy = nullptr;
     }
 
     if (nullptr != pCodecParserCtx) {
@@ -165,7 +179,61 @@ void *DJICameraStreamDecoder::callbackThreadEntry(void *p)
 
 void DJICameraStreamDecoder::callbackThreadFunc()
 {
-    while (cbThreadIsRunning) {
+    auto cb_last_execution_time = std::chrono::high_resolution_clock::now();
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
+    while (cbThreadIsRunning)
+    {
+	    now = std::chrono::high_resolution_clock::now();
+	    duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - cb_last_execution_time);
+	    if( image_ready  && duration.count() > 500 )
+	    {
+		cb_last_execution_time = now;
+
+		pthread_mutex_lock(&decodemutex);
+		if( ! pFrameYUV_copy )
+		{
+			pFrameYUV_copy = av_frame_alloc();
+			pFrameYUV_copy->format = pFrameYUV->format;
+			pFrameYUV_copy->width = pFrameYUV->width;
+			pFrameYUV_copy->height = pFrameYUV->height;
+			AVPixelFormat pixel_format = static_cast<AVPixelFormat>(pFrameYUV_copy->format);
+			int buffer_size = av_image_get_buffer_size(pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
+			uint8_t* buffer = (uint8_t*)av_malloc(buffer_size);
+			av_image_fill_arrays(pFrameYUV_copy->data, pFrameYUV_copy->linesize, buffer, pixel_format, pFrameYUV_copy->width, pFrameYUV_copy->height, 1);
+		}
+		av_frame_copy(pFrameYUV_copy, pFrameYUV);
+		pthread_mutex_unlock(&decodemutex);
+
+                int w = pFrameYUV_copy->width;
+                int h = pFrameYUV_copy->height;
+
+                if (nullptr == pSwsCtx) {
+                    pSwsCtx = sws_getContext(w, h, pCodecCtx->pix_fmt,
+                                             w, h, AV_PIX_FMT_RGB24,
+                                             4, nullptr, nullptr, nullptr);
+                }
+
+                if( 0 == bufSize) {
+                    bufSize = w * h * 3;
+                    pFrameRGB->width = w;
+                    pFrameRGB->height = h;
+                    pFrameRGB->format = AV_PIX_FMT_RGB24;
+                    av_frame_get_buffer(pFrameRGB, 1);
+                }
+
+                if (nullptr != pSwsCtx && 0 != bufSize) {
+                    sws_scale(pSwsCtx,
+                              (uint8_t const *const *) pFrameYUV_copy->data, pFrameYUV_copy->linesize, 0, pFrameYUV_copy->height,
+                              pFrameRGB->data, pFrameRGB->linesize);
+
+                    pFrameRGB->height = h;
+                    pFrameRGB->width = w;
+
+                    decodedImageHandler.writeNewImageWithLock(pFrameRGB->data[0], bufSize, w, h);
+                }
+	    }
+
         CameraRGBImage copyOfImage;
         if (!decodedImageHandler.getNewImageWithLock(copyOfImage, 1000)) {
             //DDEBUG_PRIVATE("Decoder Callback Thread: Get image time out\n");
@@ -204,38 +272,7 @@ void DJICameraStreamDecoder::decodeBuffer(const uint8_t *buf, int bufLen)
             int ret = avcodec_send_packet(pCodecCtx, &pkt);
             ret = avcodec_receive_frame(pCodecCtx, pFrameYUV);
 
-            if(0 != ret) {
-                continue;
-            } else {
-                int w = pFrameYUV->width;
-                int h = pFrameYUV->height;
-                ////DSTATUS_PRIVATE("Got picture! size=%dx%d\n", w, h);
-
-                if (nullptr == pSwsCtx) {
-                    pSwsCtx = sws_getContext(w, h, pCodecCtx->pix_fmt,
-                                             w, h, AV_PIX_FMT_RGB24,
-                                             4, nullptr, nullptr, nullptr);
-                }
-
-                if( 0 == bufSize) {
-                    bufSize = w * h * 3;
-                    pFrameRGB->width = w;
-                    pFrameRGB->height = h;
-                    pFrameRGB->format = AV_PIX_FMT_RGB24;
-                    av_frame_get_buffer(pFrameRGB, 1);
-                }
-
-                if (nullptr != pSwsCtx && 0 != bufSize) {
-                    sws_scale(pSwsCtx,
-                              (uint8_t const *const *) pFrameYUV->data, pFrameYUV->linesize, 0, pFrameYUV->height,
-                              pFrameRGB->data, pFrameRGB->linesize);
-
-                    pFrameRGB->height = h;
-                    pFrameRGB->width = w;
-
-                    decodedImageHandler.writeNewImageWithLock(pFrameRGB->data[0], bufSize, w, h);
-                }
-            }
+	    image_ready = (ret == 0);
         }
     }
     pthread_mutex_unlock(&decodemutex);
