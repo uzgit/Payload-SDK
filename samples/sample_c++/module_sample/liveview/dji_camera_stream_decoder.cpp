@@ -87,9 +87,9 @@ bool DJICameraStreamDecoder::init()
 
     pCodecCtx->thread_count = 4;
     // pCodec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    //pCodec = const_cast<AVCodec *>(avcodec_find_decoder(AV_CODEC_ID_H264));
+    pCodec = const_cast<AVCodec *>(avcodec_find_decoder(AV_CODEC_ID_H264));
     //pCodec = const_cast<AVCodec *>(avcodec_find_decoder_by_name("h264"));
-    pCodec = const_cast<AVCodec *>(avcodec_find_decoder_by_name("h264_v4l2m2m"));
+    //pCodec = const_cast<AVCodec *>(avcodec_find_decoder_by_name("h264_v4l2m2m"));
     if (!pCodec || avcodec_open2(pCodecCtx, pCodec, nullptr) < 0) {
         return false;
     }
