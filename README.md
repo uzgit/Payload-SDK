@@ -38,6 +38,8 @@ We connect the UART port on the SkyPort V2 expansion board to a UART-to-USB conv
 
 This part is non-trivial and its difficulty should not be underestimated. We will lay out the key steps of our setup, which implemented in more detail in both our [our configuration script](https://raw.githubusercontent.com/uzgit/Payload-SDK/master/configure.sh) and our code repository, and which may or may not generalize to other platforms, OS versions, PSDK versions, etc. We have only tested this for the Raspberry Pi 5, and any deviations from our setup will require their own configuration. The following is intended for [the 32-bit Raspbian Bookworm image from 2024-03-15](https://downloads.raspberrypi.com/raspios_full_armhf/images/raspios_full_armhf-2024-03-15/) and on PSDK v3.8.
 
+**The best way to do this for Raspberry Pi 5 is to flash the image linked to above and then run the configuration script before doing anything else. Once the configuration script finishes, enter your PSDK credentials into the relevant files, and recompile the project.**
+
 We use the Wayland desktop environment because it makes it easier to stream the Raspberry Pi's desktop using ```ffmpeg```, which DJI video encoding depends on. We set the resolution low in order to keep the computational load reduced.
 ```
 echo "Switching from Wayland to X11..." 
